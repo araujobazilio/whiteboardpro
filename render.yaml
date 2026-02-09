@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: whiteboard-animation-pro
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python web_service.py
+    envVars:
+      - key: PORT
+        value: 10000
+      - key: PYTHONUNBUFFERED
+        value: "true"
+      - key: LEMONSQUEEZY_API_KEY
+        sync: false
+      - key: LEMONSQUEEZY_STORE_ID
+        sync: false
+      - key: LEMONSQUEEZY_PRODUCT_ID
+        sync: false
+    autoDeploy: true
+    region: oregon
