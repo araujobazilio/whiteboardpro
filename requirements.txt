@@ -4,4 +4,3 @@ numpy>=1.24.0
 av>=11.0.0
 Pillow>=10.0.0
 requests>=2.31.0
-gunicorn==21.2.0
