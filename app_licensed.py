@@ -909,16 +909,19 @@ def check_license_status():
         return "❌ **LICENÇA NÃO ATIVADA**\\n\\nPor favor, ative sua licença para usar todas as funcionalidades."
 
 def activate_license_action(license_key, email):
-    """Ativa licença"""
+    """Ativa licença e retorna atualizações de visibilidade"""
     if not license_key or not email:
-        return "❌ Por favor, preencha todos os campos."
+        return "❌ Por favor, preencha todos os campos.", gr.update(visible=True), gr.update(visible=False)
     
     success, message = license_manager.activate_license(license_key, email)
     
     if success:
-        return f"✅ {message}\\n\\n🎉 **Licença ativada com sucesso!**\\n\\nRecarregue a página para usar todas as funcionalidades."
+        # Retorna mensagem de sucesso + esconde tela de ativação + mostra app
+        info = license_manager.get_license_info()
+        success_msg = f"✅ {message}\n\n🎉 **Licença ativada com sucesso!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
+        return success_msg, gr.update(visible=False), gr.update(visible=True)
     else:
-        return f"❌ {message}"
+        return f"❌ {message}", gr.update(visible=True), gr.update(visible=False)
 
 # Interface Gradio Comercial
 def create_commercial_interface():
@@ -937,8 +940,8 @@ def create_commercial_interface():
         </div>
         """)
         
-        if not is_licensed:
-            # Interface de ativação
+        # GRUPO 1: Tela de Ativação (inicialmente visível se não licenciado)
+        with gr.Group(visible=not is_licensed) as activation_group:
             gr.HTML("""
             <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
                 <h3 style="color: #856404; margin: 0 0 10px 0;">🔑 Ativação Necessária</h3>
@@ -986,13 +989,6 @@ def create_commercial_interface():
                             visible=True
                         )
             
-            # Eventos de ativação
-            activate_btn.click(
-                fn=activate_license_action,
-                inputs=[license_key_input, email_input],
-                outputs=[activation_result]
-            )
-            
             # Preview limitado
             gr.HTML("""
             <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 15px; margin-top: 20px;">
@@ -1007,21 +1003,22 @@ def create_commercial_interface():
                 </ul>
             </div>
             """)
-            
-        else:
-            # Interface completa
-            license_info = license_manager.get_license_info()
-            
-            gr.HTML(f"""
-            <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                <h3 style="color: #155724; margin: 0 0 10px 0;">✅ Licença Ativada</h3>
-                <p style="color: #155724; margin: 0;">
-                    <strong>Email:</strong> {license_info['email']} | 
-                    <strong>Plano:</strong> {license_info['plan'].upper()} | 
-                    <strong>Ativada em:</strong> {license_info['activated_at'][:10]}
-                </p>
-            </div>
-            """)
+        
+        # GRUPO 2: App Completo (inicialmente visível se licenciado)
+        with gr.Group(visible=is_licensed) as app_group:
+            # Mostrar info da licença (se licenciado)
+            if is_licensed:
+                license_info = license_manager.get_license_info()
+                gr.HTML(f"""
+                <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                    <h3 style="color: #155724; margin: 0 0 10px 0;">✅ Licença Ativada</h3>
+                    <p style="color: #155724; margin: 0;">
+                        <strong>Email:</strong> {license_info['email']} | 
+                        <strong>Plano:</strong> {license_info['plan'].upper()} | 
+                        <strong>Ativada em:</strong> {license_info['activated_at'][:10]}
+                    </p>
+                </div>
+                """)
             
             with gr.Tabs():
                 # Tab de Processamento Individual
@@ -1144,68 +1141,6 @@ def create_commercial_interface():
                                 placeholder="Processamento não iniciado"
                             )
             
-            # Funções auxiliares para interface
-            def update_batch_info(files):
-                if files is None:
-                    return "Nenhuma imagem selecionada"
-                
-                file_count = len(files)
-                total_size = sum(os.path.getsize(file if isinstance(file, str) else file.name) for file in files) / (1024 * 1024)  # MB
-                
-                info = f"📁 {file_count} imagens selecionadas\\n"
-                info += f"💾 Tamanho total: {total_size:.1f} MB"
-                
-                return info
-            
-            def process_batch_images(files, split_len, frame_rate, skip_rate, end_duration, draw_mode, progress=gr.Progress()):
-                if files is None or len(files) == 0:
-                    return None, "❌ Nenhuma imagem selecionada", "Nenhuma imagem para processar"
-                
-                # Extrair caminhos dos arquivos (compatível com Gradio 5 e 6)
-                image_paths = [file if isinstance(file, str) else file.name for file in files]
-                
-                # Processar em lote
-                zip_path, message = generate_sketch_video_batch(
-                    image_paths, split_len, frame_rate, skip_rate, end_duration, draw_mode, progress
-                )
-                
-                # Gerar estatísticas
-                stats = f"📊 Estatísticas do Processamento:\\n"
-                stats += f"🔥 Processamento paralelo com 4 threads\\n"
-                stats += f"⚡ Otimização automática de recursos"
-                
-                if zip_path:
-                    return zip_path, message, stats
-                else:
-                    return None, message, stats
-            
-            # Eventos - Processamento Individual
-            image_input.change(
-                fn=get_image_info,
-                inputs=[image_input],
-                outputs=[image_info, split_len]
-            )
-            
-            generate_btn.click(
-                fn=generate_sketch_video,
-                inputs=[image_input, split_len, frame_rate, skip_rate, end_duration, draw_mode],
-                outputs=[video_output, status_output]
-            )
-            
-            # Eventos - Processamento em Lote
-            batch_images.change(
-                fn=update_batch_info,
-                inputs=[batch_images],
-                outputs=[batch_info]
-            )
-            
-            batch_generate_btn.click(
-                fn=process_batch_images,
-                inputs=[batch_images, batch_split_len, batch_frame_rate, batch_skip_rate, batch_end_duration, batch_draw_mode],
-                outputs=[batch_zip_output, batch_status_output, batch_stats],
-                show_progress=True
-            )
-            
             # Rodapé profissional
             gr.HTML("""
             <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; margin-top: 20px; text-align: center;">
@@ -1216,6 +1151,75 @@ def create_commercial_interface():
                 </p>
             </div>
             """)
+        
+        # Eventos de ativação - atualiza visibilidade dos grupos
+        activate_btn.click(
+            fn=activate_license_action,
+            inputs=[license_key_input, email_input],
+            outputs=[activation_result, activation_group, app_group]
+        )
+        
+        # Funções auxiliares para interface
+        def update_batch_info(files):
+            if files is None:
+                return "Nenhuma imagem selecionada"
+            
+            file_count = len(files)
+            total_size = sum(os.path.getsize(file if isinstance(file, str) else file.name) for file in files) / (1024 * 1024)  # MB
+            
+            info = f"📁 {file_count} imagens selecionadas\\n"
+            info += f"💾 Tamanho total: {total_size:.1f} MB"
+            
+            return info
+        
+        def process_batch_images(files, split_len, frame_rate, skip_rate, end_duration, draw_mode, progress=gr.Progress()):
+            if files is None or len(files) == 0:
+                return None, "❌ Nenhuma imagem selecionada", "Nenhuma imagem para processar"
+            
+            # Extrair caminhos dos arquivos (compatível com Gradio 5 e 6)
+            image_paths = [file if isinstance(file, str) else file.name for file in files]
+            
+            # Processar em lote
+            zip_path, message = generate_sketch_video_batch(
+                image_paths, split_len, frame_rate, skip_rate, end_duration, draw_mode, progress
+            )
+            
+            # Gerar estatísticas
+            stats = f"📊 Estatísticas do Processamento:\\n"
+            stats += f"🔥 Processamento paralelo com 4 threads\\n"
+            stats += f"⚡ Otimização automática de recursos"
+            
+            if zip_path:
+                return zip_path, message, stats
+            else:
+                return None, message, stats
+        
+        # Eventos - Processamento Individual
+        image_input.change(
+            fn=get_image_info,
+            inputs=[image_input],
+            outputs=[image_info, split_len]
+        )
+        
+        generate_btn.click(
+            fn=generate_sketch_video,
+            inputs=[image_input, split_len, frame_rate, skip_rate, end_duration, draw_mode],
+            outputs=[video_output, status_output]
+        )
+        
+        # Eventos - Processamento em Lote
+        batch_images.change(
+            fn=update_batch_info,
+            inputs=[batch_images],
+            outputs=[batch_info]
+        )
+        
+        batch_generate_btn.click(
+            fn=process_batch_images,
+            inputs=[batch_images, batch_split_len, batch_frame_rate, batch_skip_rate, batch_end_duration, batch_draw_mode],
+            outputs=[batch_zip_output, batch_status_output, batch_stats],
+            show_progress=True
+        )
     
     return app
 
