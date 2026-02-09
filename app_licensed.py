@@ -32,9 +32,22 @@ class LicenseManager:
         self.store_id = os.environ.get("LEMONSQUEEZY_STORE_ID", "")
         self.product_id = os.environ.get("LEMONSQUEEZY_PRODUCT_ID", "")
         self._current_license = None
+        self._demo_mode = not self.api_key  # Modo demo se não houver API key
     
     def validate_license_key(self, license_key):
-        """Valida chave de licença via API Lemon Squeezy"""
+        """Valida chave de licença via API Lemon Squeezy ou modo demo"""
+        # Modo demo: aceita qualquer chave se não houver API key configurada
+        if self._demo_mode:
+            return {
+                "valid": True,
+                "email": "demo@whiteboardpro.com",
+                "plan": "pro",
+                "activated_at": datetime.now().isoformat(),
+                "status": "active",
+                "key": license_key,
+                "demo": True
+            }
+        
         try:
             url = "https://api.lemonsqueezy.com/v1/licenses/validate"
             payload = {
