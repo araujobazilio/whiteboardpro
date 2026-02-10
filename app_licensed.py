@@ -441,28 +441,11 @@ def generate_sketch_video(
                 if len(blocks) == 0:
                     continue
                 
-                # Ordenar blocos por proximidade (nearest neighbor simples)
-                ordered_blocks = [blocks[0]]
-                remaining = list(range(1, len(blocks)))
-                current_r, current_c = blocks[0][2], blocks[0][3]
-                
-                while remaining:
-                    best_idx = 0
-                    best_dist = float('inf')
-                    for i, idx in enumerate(remaining):
-                        dr = blocks[idx][2] - current_r
-                        dc = blocks[idx][3] - current_c
-                        dist = dr * dr + dc * dc
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_idx = i
-                    
-                    chosen = remaining.pop(best_idx)
-                    ordered_blocks.append(blocks[chosen])
-                    current_r, current_c = blocks[chosen][2], blocks[chosen][3]
+                # Ordenar blocos por linha e coluna (rápido e natural)
+                blocks.sort(key=lambda b: (b[2], b[3]))
                 
                 # Pintar bloco por bloco com animação
-                for block_ys, block_xs, gr_row, gr_col in ordered_blocks:
+                for block_ys, block_xs, gr_row, gr_col in blocks:
                     # Aplicar cor do bloco inteiro de uma vez (vetorizado)
                     drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
                     
@@ -578,8 +561,8 @@ def generate_sketch_video_batch(
             except Exception as e:
                 return idx, None, str(e)
         
-        # Processar imagens em paralelo (máximo 4 threads para não sobrecarregar)
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        # Processar imagens sequencialmente para evitar sobrecarga de CPU no Railway
+        with ThreadPoolExecutor(max_workers=1) as executor:
             # Enviar todas as tarefas
             future_to_idx = {
                 executor.submit(process_single_image, (idx, path)): idx 
@@ -834,28 +817,11 @@ def generate_sketch_video_single(
                 if len(blocks) == 0:
                     continue
                 
-                # Ordenar blocos por proximidade
-                ordered_blocks = [blocks[0]]
-                remaining = list(range(1, len(blocks)))
-                current_r, current_c = blocks[0][2], blocks[0][3]
-                
-                while remaining:
-                    best_idx = 0
-                    best_dist = float('inf')
-                    for i, idx in enumerate(remaining):
-                        dr = blocks[idx][2] - current_r
-                        dc = blocks[idx][3] - current_c
-                        dist = dr * dr + dc * dc
-                        if dist < best_dist:
-                            best_dist = dist
-                            best_idx = i
-                    
-                    chosen = remaining.pop(best_idx)
-                    ordered_blocks.append(blocks[chosen])
-                    current_r, current_c = blocks[chosen][2], blocks[chosen][3]
+                # Ordenar blocos por linha e coluna (rápido e natural)
+                blocks.sort(key=lambda b: (b[2], b[3]))
                 
                 # Pintar bloco por bloco com animação
-                for block_ys, block_xs, gr_row, gr_col in ordered_blocks:
+                for block_ys, block_xs, gr_row, gr_col in blocks:
                     drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
                     
                     block_counter += 1
