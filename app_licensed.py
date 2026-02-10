@@ -1,6 +1,6 @@
 """
 Image to Sketch Animation - Versão COMERCIAL
-Sistema completo com licenciamento integrado para venda na Lemon Squeezy
+Sistema completo com licenciamento integrado via Stripe
 """
 
 import os
@@ -16,99 +16,125 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 import shutil
-import json
-import requests
+import stripe
 from datetime import datetime, timedelta
 
-# Sistema de Licenciamento Integrado (Lemon Squeezy API)
+# Sistema de Licenciamento Integrado (Stripe API)
 
 class LicenseManager:
-    # Cache de licenças validadas (em memória, por sessão do servidor)
     _validated_licenses = {}
     
     def __init__(self):
-        # Credenciais via variáveis de ambiente (segurança)
-        self.api_key = os.environ.get("LEMONSQUEEZY_API_KEY", "")
-        self.store_id = os.environ.get("LEMONSQUEEZY_STORE_ID", "")
-        self.product_id = os.environ.get("LEMONSQUEEZY_PRODUCT_ID", "")
+        self.stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
+        self.stripe_price_id = os.environ.get("STRIPE_PRICE_ID", "")
+        self.payment_link = os.environ.get("STRIPE_PAYMENT_LINK", "")
         self._current_license = None
-        self._demo_mode = not self.api_key  # Modo demo se não houver API key
+        self._demo_mode = not self.stripe_secret_key
+        
+        if self.stripe_secret_key:
+            stripe.api_key = self.stripe_secret_key
     
-    def validate_license_key(self, license_key):
-        """Valida chave de licença via API Lemon Squeezy ou modo demo"""
-        # Modo demo: aceita qualquer chave se não houver API key configurada
+    def validate_by_email(self, email):
+        """Valida se o email tem uma assinatura ativa no Stripe"""
         if self._demo_mode:
             return {
                 "valid": True,
-                "email": "demo@whiteboardpro.com",
+                "email": email,
                 "plan": "pro",
                 "activated_at": datetime.now().isoformat(),
                 "status": "active",
-                "key": license_key,
                 "demo": True
             }
         
+        # Verificar cache primeiro (válido por 1 hora)
+        cached = LicenseManager._validated_licenses.get(email)
+        if cached:
+            cache_time = cached.get("_cache_time")
+            if cache_time and (datetime.now() - cache_time).seconds < 3600:
+                return cached
+        
         try:
-            url = "https://api.lemonsqueezy.com/v1/licenses/validate"
-            payload = {
-                "license_key": license_key,
-                "instance_name": "web_app"
-            }
-            headers = {
-                "Accept": "application/json",
-                "Content-Type": "application/json"
-            }
+            # Buscar cliente pelo email no Stripe
+            customers = stripe.Customer.list(email=email.strip().lower(), limit=1)
             
-            response = requests.post(url, json=payload, headers=headers, timeout=15)
-            data = response.json()
+            if not customers.data:
+                return {"valid": False, "error": "Email não encontrado. Verifique se usou o mesmo email da compra."}
             
-            if data.get("valid") or data.get("license_key", {}).get("status") == "active":
-                license_info = data.get("license_key", {})
-                meta = data.get("meta", {})
-                return {
+            customer = customers.data[0]
+            
+            # Buscar assinaturas ativas do cliente
+            subscriptions = stripe.Subscription.list(
+                customer=customer.id,
+                status="active",
+                limit=5
+            )
+            
+            if subscriptions.data:
+                sub = subscriptions.data[0]
+                result = {
                     "valid": True,
-                    "email": license_info.get("user_email", ""),
-                    "plan": meta.get("variant_name", "pro"),
-                    "activated_at": license_info.get("created_at", datetime.now().isoformat()),
+                    "email": email,
+                    "plan": "pro",
+                    "activated_at": datetime.fromtimestamp(sub.created).isoformat(),
                     "status": "active",
-                    "key": license_key
+                    "subscription_id": sub.id,
+                    "current_period_end": datetime.fromtimestamp(sub.current_period_end).isoformat(),
+                    "_cache_time": datetime.now()
                 }
+                LicenseManager._validated_licenses[email] = result
+                return result
             
-            error_msg = data.get("error", "Chave inválida ou expirada")
-            return {"valid": False, "error": error_msg}
+            # Verificar também pagamentos únicos (one-time) caso mude o modelo
+            payments = stripe.PaymentIntent.list(
+                customer=customer.id,
+                limit=5
+            )
             
-        except requests.exceptions.ConnectionError:
-            # Modo offline: verificar cache local
-            cached = LicenseManager._validated_licenses.get(license_key)
+            for payment in payments.data:
+                if payment.status == "succeeded":
+                    result = {
+                        "valid": True,
+                        "email": email,
+                        "plan": "pro",
+                        "activated_at": datetime.fromtimestamp(payment.created).isoformat(),
+                        "status": "active",
+                        "payment_id": payment.id,
+                        "_cache_time": datetime.now()
+                    }
+                    LicenseManager._validated_licenses[email] = result
+                    return result
+            
+            return {"valid": False, "error": "Nenhuma assinatura ativa encontrada para este email."}
+            
+        except stripe.error.AuthenticationError:
+            return {"valid": False, "error": "Erro de autenticação com o servidor de pagamentos."}
+        except stripe.error.APIConnectionError:
+            cached = LicenseManager._validated_licenses.get(email)
             if cached:
                 return cached
-            return {"valid": False, "error": "Sem conexão com o servidor de licenças"}
+            return {"valid": False, "error": "Sem conexão com o servidor de pagamentos."}
         except Exception as e:
-            return {"valid": False, "error": str(e)}
+            return {"valid": False, "error": f"Erro ao verificar licença: {str(e)}"}
     
     def activate_license(self, license_key, email):
-        """Ativa licença via API Lemon Squeezy"""
-        if not license_key or not email or len(license_key) < 5:
-            return False, "❌ Preencha a chave de licença e o email corretamente."
+        """Ativa licença verificando assinatura no Stripe pelo email"""
+        if not email or len(email) < 5 or "@" not in email:
+            return False, "❌ Por favor, insira um email válido."
         
-        result = self.validate_license_key(license_key.strip())
+        result = self.validate_by_email(email.strip().lower())
         
         if result.get("valid"):
-            # Salvar no cache em memória
-            result["email"] = email
-            LicenseManager._validated_licenses[license_key.strip()] = result
             self._current_license = result
             return True, "✅ Licença ativada com sucesso!"
         else:
-            error = result.get("error", "Chave inválida")
-            return False, f"❌ Erro: {error}"
+            error = result.get("error", "Email não encontrado")
+            return False, f"❌ {error}"
     
     def is_licensed(self):
         """Verifica se há licença ativa na sessão"""
         if self._current_license and self._current_license.get("valid"):
             return True
-        # Verificar se há alguma licença no cache
-        for key, data in LicenseManager._validated_licenses.items():
+        for email, data in LicenseManager._validated_licenses.items():
             if data.get("valid"):
                 self._current_license = data
                 return True
@@ -916,20 +942,19 @@ def check_license_status():
     else:
         return "❌ **LICENÇA NÃO ATIVADA**\\n\\nPor favor, ative sua licença para usar todas as funcionalidades."
 
-def activate_license_action(license_key, email):
-    """Ativa licença e retorna atualizações de visibilidade"""
-    if not license_key or not email:
-        return "❌ Por favor, preencha todos os campos.", gr.update(visible=True), gr.update(visible=False)
+def activate_license_action(email):
+    """Ativa licença verificando assinatura no Stripe pelo email"""
+    if not email or "@" not in email:
+        return "❌ Por favor, insira um email válido.", gr.update(visible=True), gr.update(visible=False)
     
-    success, message = license_manager.activate_license(license_key, email)
+    success, message = license_manager.activate_license("", email)
     
     if success:
-        # Retorna mensagem de sucesso + esconde tela de ativação + mostra app
         info = license_manager.get_license_info()
-        success_msg = f"✅ {message}\n\n🎉 **Licença ativada com sucesso!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
+        success_msg = f"✅ {message}\n\n🎉 **Acesso liberado!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
         return success_msg, gr.update(visible=False), gr.update(visible=True)
     else:
-        return f"❌ {message}", gr.update(visible=True), gr.update(visible=False)
+        return f"{message}", gr.update(visible=True), gr.update(visible=False)
 
 # Interface Gradio Comercial
 def create_commercial_interface():
@@ -953,49 +978,44 @@ def create_commercial_interface():
             gr.HTML("""
             <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
                 <h3 style="color: #856404; margin: 0 0 10px 0;">🔑 Ativação Necessária</h3>
-                <p style="color: #856404; margin: 0;">Para usar todas as funcionalidades, por favor, ative sua licença.</p>
+                <p style="color: #856404; margin: 0;">Para usar todas as funcionalidades, assine o plano e ative com seu email.</p>
             </div>
             """)
             
             with gr.Row():
                 with gr.Column(scale=1):
-                    gr.HTML("""
+                    gr.HTML(f"""
                     <div style="background: #f8f9fa; border-radius: 8px; padding: 20px;">
-                        <h3 style="color: #495057; margin: 0 0 15px 0;">📦 Como obter sua licença:</h3>
+                        <h3 style="color: #495057; margin: 0 0 15px 0;">📦 Como começar:</h3>
                         <ol style="color: #495057; line-height: 1.8; font-size: 1.05em;">
-                            <li><strong>Adquira sua licença</strong> clicando no botão abaixo</li>
-                            <li>Complete o pagamento via <strong>PayPal</strong></li>
-                            <li>Você receberá a <strong>chave de licença por email</strong> automaticamente</li>
-                            <li>Insira a chave e o email no formulário ao lado</li>
-                            <li>Clique em <strong>"Ativar Licença"</strong> e pronto!</li>
+                            <li><strong>Clique no botão abaixo</strong> para ir ao checkout seguro</li>
+                            <li>Pague com <strong>cartão de crédito ou Pix</strong></li>
+                            <li>Após o pagamento, <strong>digite o email usado na compra</strong> no formulário ao lado</li>
+                            <li>Clique em <strong>"Ativar Acesso"</strong> e pronto!</li>
                         </ol>
                         <div style="text-align: center; margin-top: 20px;">
-                            <a href="https://aiinfinitus.lemonsqueezy.com/checkout/buy/8c99a0fb-9f92-4975-b537-2d10eb3afb72" 
+                            <a href="{license_manager.payment_link or 'https://buy.stripe.com/test_fZucN56oD7Ix97h4wUcQU00'}" 
                                target="_blank" 
                                style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 1.15em; font-weight: bold; box-shadow: 0 4px 15px rgba(102,126,234,0.4); transition: transform 0.2s;">
-                                🛒 Comprar Licença - R$49,90/ano
+                                🛒 Assinar - R$49,90/ano
                             </a>
+                            <p style="color: #6c757d; margin-top: 10px; font-size: 0.9em;">Pagamento seguro via Stripe. Cancele quando quiser.</p>
                         </div>
                     </div>
                     """)
                 
                 with gr.Column(scale=1):
-                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Já tem uma licença? Ative aqui:</h3>")
+                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Já assinou? Ative seu acesso:</h3>")
                     
                     with gr.Group():
-                        license_key_input = gr.Textbox(
-                            label="🔑 Chave de Licença",
-                            placeholder="Cole aqui a chave recebida por email",
-                            type="password"
-                        )
-                        
                         email_input = gr.Textbox(
-                            label="📧 Email usado na compra",
-                            placeholder="seu@email.com"
+                            label="� Email usado na compra",
+                            placeholder="seu@email.com",
+                            info="Use o mesmo email que você usou no checkout do Stripe"
                         )
                         
                         activate_btn = gr.Button(
-                            "🚀 Ativar Licença",
+                            "🚀 Ativar Acesso",
                             variant="primary",
                             size="lg"
                         )
@@ -1165,8 +1185,7 @@ def create_commercial_interface():
             <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; margin-top: 20px; text-align: center;">
                 <h3 style="color: #495057; margin: 0 0 10px 0;">🎯 Whiteboard Animation Pro</h3>
                 <p style="color: #6c757d; margin: 0;">
-                    Versão Comercial &copy; 2025 Ai Infinitus - Todos os direitos reservados<br>
-                    <a href="https://aiinfinitus.lemonsqueezy.com" target="_blank" style="color: #667eea; text-decoration: none;">aiinfinitus.lemonsqueezy.com</a>
+                    Versão Comercial &copy; 2025 Ai Infinitus - Todos os direitos reservados
                 </p>
             </div>
             """)
@@ -1174,7 +1193,7 @@ def create_commercial_interface():
         # Eventos de ativação - atualiza visibilidade dos grupos
         activate_btn.click(
             fn=activate_license_action,
-            inputs=[license_key_input, email_input],
+            inputs=[email_input],
             outputs=[activation_result, activation_group, app_group]
         )
         
