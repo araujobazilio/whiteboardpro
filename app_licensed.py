@@ -1147,41 +1147,239 @@ def create_commercial_interface():
         </script>
         """)
         
-        # Cabeçalho profissional
-        gr.HTML("""
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; margin-bottom: 20px; text-align: center;">
-            <h1 style="margin: 0; font-size: 2.5em;">🎨 Whiteboard Animation Pro</h1>
-            <p style="margin: 10px 0 0 0; font-size: 1.2em; opacity: 0.9;">Transforme imagens em vídeos de animação whiteboard profissionais</p>
-        </div>
-        """)
+        # ============================================================
+        # GRUPO 0: LANDING PAGE (visível quando não logado)
+        # ============================================================
+        payment_url = license_manager.payment_link or 'https://buy.stripe.com/test_5kQ28rfZdd2RablaVicQU02'
         
-        # GRUPO 1: Tela de Ativação (inicialmente visível se não licenciado)
-        with gr.Group(visible=not is_licensed) as activation_group:
+        with gr.Group(visible=not is_licensed) as landing_group:
+            
+            # --- HERO SECTION ---
+            gr.HTML(f"""
+            <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%); color: white; padding: 60px 20px; border-radius: 16px; margin-bottom: 30px; text-align: center; position: relative; overflow: hidden;">
+                <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; background: url('data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><circle cx=%2220%22 cy=%2230%22 r=%2240%22 fill=%22rgba(102,126,234,0.08)%22/><circle cx=%2280%22 cy=%2270%22 r=%2250%22 fill=%22rgba(118,75,162,0.06)%22/></svg>'); background-size: cover;"></div>
+                <div style="position: relative; z-index: 1;">
+                    <div style="display: inline-block; background: linear-gradient(135deg, #ff6b6b, #ee5a24); color: white; padding: 6px 20px; border-radius: 20px; font-size: 0.85em; font-weight: bold; margin-bottom: 20px; letter-spacing: 1px;">
+                        🔥 PROMOÇÃO DE LANÇAMENTO - 50% OFF
+                    </div>
+                    <h1 style="margin: 0 0 15px 0; font-size: 3em; font-weight: 800; line-height: 1.1; background: linear-gradient(135deg, #fff, #e0e0ff); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">
+                        Transforme Imagens em<br>Vídeos Whiteboard Animados
+                    </h1>
+                    <p style="margin: 0 auto 30px auto; font-size: 1.25em; opacity: 0.85; max-width: 600px; line-height: 1.6;">
+                        Crie vídeos profissionais de animação whiteboard em segundos. Perfeito para aulas, apresentações, reels e stories.
+                    </p>
+                    <div style="display: flex; gap: 15px; justify-content: center; flex-wrap: wrap;">
+                        <a href="{payment_url}" target="_blank" 
+                           style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px 40px; border-radius: 50px; text-decoration: none; font-size: 1.15em; font-weight: bold; box-shadow: 0 8px 25px rgba(102,126,234,0.4); transition: all 0.3s;">
+                            🛒 Assinar Agora - <span style="text-decoration: line-through; opacity: 0.7;">R$97,90</span> R$49,90/ano
+                        </a>
+                        <a href="#login-section" onclick="document.getElementById('login-section').scrollIntoView({{behavior:'smooth'}}); return false;"
+                           style="display: inline-block; background: rgba(255,255,255,0.15); color: white; padding: 16px 40px; border-radius: 50px; text-decoration: none; font-size: 1.15em; font-weight: bold; border: 2px solid rgba(255,255,255,0.3); transition: all 0.3s;">
+                            🔐 Já sou assinante
+                        </a>
+                    </div>
+                    <p style="margin-top: 15px; font-size: 0.85em; opacity: 0.6;">Pagamento seguro via Stripe. Cancele quando quiser.</p>
+                </div>
+            </div>
+            """)
+            
+            # --- VÍDEO DEMO (placeholder para YouTube) ---
             gr.HTML("""
-            <div style="background: #fff3cd; border: 1px solid #ffeaa7; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                <h3 style="color: #856404; margin: 0 0 10px 0;">🔑 Ativação Necessária</h3>
-                <p style="color: #856404; margin: 0;">Para usar todas as funcionalidades, assine o plano e ative com seu email.</p>
+            <div style="text-align: center; margin-bottom: 40px;">
+                <h2 style="color: #1a1a2e; font-size: 2em; margin-bottom: 20px;">🎬 Veja o resultado</h2>
+                <div style="max-width: 720px; margin: 0 auto; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 16/9; display: flex; align-items: center; justify-content: center;">
+                    <!-- SUBSTITUIR pelo embed do YouTube quando tiver o link -->
+                    <p style="color: #888; font-size: 1.2em;">🎥 Vídeo demonstrativo em breve</p>
+                </div>
+            </div>
+            """)
+            
+            # --- COMO FUNCIONA ---
+            gr.HTML("""
+            <div style="margin-bottom: 40px;">
+                <h2 style="text-align: center; color: #1a1a2e; font-size: 2em; margin-bottom: 30px;">⚡ Como Funciona</h2>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+                    <div style="flex: 1; min-width: 250px; max-width: 320px; background: #f8f9ff; border-radius: 16px; padding: 30px; text-align: center; border: 1px solid #e8eaf6;">
+                        <div style="font-size: 3em; margin-bottom: 15px;">📤</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">1. Faça Upload</h3>
+                        <p style="color: #666; margin: 0; line-height: 1.6;">Envie sua imagem (slide, ilustração, diagrama). Aceita PNG, JPG e mais.</p>
+                    </div>
+                    <div style="flex: 1; min-width: 250px; max-width: 320px; background: #f8f9ff; border-radius: 16px; padding: 30px; text-align: center; border: 1px solid #e8eaf6;">
+                        <div style="font-size: 3em; margin-bottom: 15px;">🎨</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">2. Processamento</h3>
+                        <p style="color: #666; margin: 0; line-height: 1.6;">O app transforma automaticamente em animação whiteboard com mão desenhando.</p>
+                    </div>
+                    <div style="flex: 1; min-width: 250px; max-width: 320px; background: #f8f9ff; border-radius: 16px; padding: 30px; text-align: center; border: 1px solid #e8eaf6;">
+                        <div style="font-size: 3em; margin-bottom: 15px;">📥</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">3. Download</h3>
+                        <p style="color: #666; margin: 0; line-height: 1.6;">Baixe o vídeo MP4 pronto para usar em aulas, YouTube, Reels ou Stories.</p>
+                    </div>
+                </div>
+            </div>
+            """)
+            
+            # --- ESTILOS RECOMENDADOS ---
+            gr.HTML("""
+            <div style="margin-bottom: 40px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); border-radius: 16px; padding: 40px 20px;">
+                <h2 style="text-align: center; color: #1a1a2e; font-size: 2em; margin-bottom: 10px;">🖼️ Melhores Estilos de Imagem</h2>
+                <p style="text-align: center; color: #666; margin-bottom: 30px; font-size: 1.1em;">O app funciona melhor com imagens nestes estilos. Use IA (ChatGPT, Gemini, etc.) para gerar!</p>
+                
+                <div style="display: flex; gap: 20px; flex-wrap: wrap; justify-content: center;">
+                    <!-- Estilo 1: Line Art Colorido -->
+                    <div style="flex: 1; min-width: 280px; max-width: 350px; background: white; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+                        <div style="background: linear-gradient(135deg, #667eea, #764ba2); color: white; display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; margin-bottom: 15px;">RECOMENDADO</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">🎨 Line Art Colorido</h3>
+                        <p style="color: #666; font-size: 0.9em; line-height: 1.6; margin-bottom: 15px;">Traços pretos nítidos sobre fundo branco com cores leves e translúcidas. Perfeito para slides educativos.</p>
+                        <details style="cursor: pointer;">
+                            <summary style="color: #667eea; font-weight: bold; font-size: 0.9em;">📋 Ver prompt para IA</summary>
+                            <p style="background: #f8f9fa; padding: 12px; border-radius: 8px; font-size: 0.8em; color: #555; margin-top: 10px; line-height: 1.5;">
+                                "Crie uma ilustração em line art minimalista técnico para slide de apresentação, estilo esboço profissional clean e didático. Use traços pretos nítidos sobre fundo branco puro 100%. Adicione cor de maneira restrita e elegante: contornos finos de destaque, preenchimento leve/translúcido (opacidade 10-30%). Estilo ultra-clean, técnico, alta legibilidade."
+                            </p>
+                        </details>
+                    </div>
+                    
+                    <!-- Estilo 2: Preto e Branco -->
+                    <div style="flex: 1; min-width: 280px; max-width: 350px; background: white; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+                        <div style="background: #333; color: white; display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; margin-bottom: 15px;">CLÁSSICO</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">✒️ Line Art P&B</h3>
+                        <p style="color: #666; font-size: 0.9em; line-height: 1.6; margin-bottom: 15px;">Traços pretos limpos sobre fundo branco puro. Estilo whiteboard clássico, ideal para ilustrações técnicas.</p>
+                        <details style="cursor: pointer;">
+                            <summary style="color: #667eea; font-weight: bold; font-size: 0.9em;">📋 Ver prompt para IA</summary>
+                            <p style="background: #f8f9fa; padding: 12px; border-radius: 8px; font-size: 0.8em; color: #555; margin-top: 10px; line-height: 1.5;">
+                                "Crie uma imagem para slide de apresentação. Estilo Line Art minimalista em preto e branco, com traços pretos nítidos e limpos sobre fundo branco puro. Ilustração simplificada. Estilo de esboço técnico profissional, sem sombras complexas ou cores, apenas contornos e hachuras leves para profundidade."
+                            </p>
+                        </details>
+                    </div>
+                    
+                    <!-- Estilo 3: Cartoon Educativo -->
+                    <div style="flex: 1; min-width: 280px; max-width: 350px; background: white; border-radius: 12px; padding: 25px; box-shadow: 0 4px 15px rgba(0,0,0,0.08);">
+                        <div style="background: linear-gradient(135deg, #ff6b6b, #ee5a24); color: white; display: inline-block; padding: 4px 12px; border-radius: 20px; font-size: 0.8em; font-weight: bold; margin-bottom: 15px;">DIVERTIDO</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 10px 0;">🎭 Cartoon Educativo</h3>
+                        <p style="color: #666; font-size: 0.9em; line-height: 1.6; margin-bottom: 15px;">Traços grossos, cores planas e vibrantes. Estilo cartoon moderno, ótimo para conteúdo descontraído.</p>
+                        <details style="cursor: pointer;">
+                            <summary style="color: #667eea; font-weight: bold; font-size: 0.9em;">📋 Ver prompt para IA</summary>
+                            <p style="background: #f8f9fa; padding: 12px; border-radius: 8px; font-size: 0.8em; color: #555; margin-top: 10px; line-height: 1.5;">
+                                "Crie uma ilustração em estilo cartoon educativo. Traços pretos grossos, uniformes e nítidos. Contornos limpos e fechados, estilo digital clean. Cores planas (flat colors), sem gradientes. Paleta profissional e vibrante. Fundo 100% branco puro para máxima legibilidade em slides."
+                            </p>
+                        </details>
+                    </div>
+                </div>
+            </div>
+            """)
+            
+            # --- DIMENSÕES RECOMENDADAS ---
+            gr.HTML("""
+            <div style="margin-bottom: 40px;">
+                <h2 style="text-align: center; color: #1a1a2e; font-size: 2em; margin-bottom: 30px;">📐 Dimensões Recomendadas</h2>
+                <div style="display: flex; gap: 30px; flex-wrap: wrap; justify-content: center;">
+                    <div style="flex: 1; min-width: 280px; max-width: 400px; background: white; border-radius: 16px; padding: 30px; text-align: center; border: 2px solid #667eea; box-shadow: 0 4px 15px rgba(102,126,234,0.15);">
+                        <div style="font-size: 2.5em; margin-bottom: 10px;">🖥️</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 5px 0;">16:9 (Paisagem)</h3>
+                        <p style="color: #667eea; font-weight: bold; margin: 0 0 10px 0;">1920x1080 px</p>
+                        <p style="color: #666; font-size: 0.9em; margin: 0; line-height: 1.5;">Ideal para <strong>slides, YouTube, aulas</strong> e apresentações. Melhor formato para o app.</p>
+                    </div>
+                    <div style="flex: 1; min-width: 280px; max-width: 400px; background: white; border-radius: 16px; padding: 30px; text-align: center; border: 2px solid #764ba2; box-shadow: 0 4px 15px rgba(118,75,162,0.15);">
+                        <div style="font-size: 2.5em; margin-bottom: 10px;">📱</div>
+                        <h3 style="color: #1a1a2e; margin: 0 0 5px 0;">9:16 (Retrato)</h3>
+                        <p style="color: #764ba2; font-weight: bold; margin: 0 0 10px 0;">1080x1920 px</p>
+                        <p style="color: #666; font-size: 0.9em; margin: 0; line-height: 1.5;">Perfeito para <strong>Stories, Reels, TikTok</strong> e conteúdo vertical.</p>
+                    </div>
+                </div>
+            </div>
+            """)
+            
+            # --- PREÇO COM PROMOÇÃO ---
+            gr.HTML(f"""
+            <div style="margin-bottom: 40px; text-align: center;">
+                <h2 style="color: #1a1a2e; font-size: 2em; margin-bottom: 30px;">💰 Investimento</h2>
+                <div style="max-width: 420px; margin: 0 auto; background: white; border-radius: 20px; padding: 40px 30px; box-shadow: 0 8px 30px rgba(0,0,0,0.12); border: 2px solid #667eea; position: relative; overflow: hidden;">
+                    <div style="position: absolute; top: 0; left: 0; right: 0; background: linear-gradient(135deg, #ff6b6b, #ee5a24); color: white; padding: 8px; font-weight: bold; font-size: 0.9em; letter-spacing: 1px;">
+                        🔥 PROMOÇÃO DE LANÇAMENTO - 50% OFF - POR TEMPO LIMITADO
+                    </div>
+                    <div style="margin-top: 30px;">
+                        <h3 style="color: #1a1a2e; font-size: 1.5em; margin: 0 0 5px 0;">Plano Anual PRO</h3>
+                        <p style="color: #999; margin: 0 0 15px 0;">Acesso completo a todas as funcionalidades</p>
+                        <div style="margin: 20px 0;">
+                            <span style="color: #999; font-size: 1.3em; text-decoration: line-through;">R$ 97,90</span>
+                            <span style="color: #1a1a2e; font-size: 3em; font-weight: 800; margin-left: 10px;">R$ 49,90</span>
+                            <span style="color: #666; font-size: 1em;">/ano</span>
+                        </div>
+                        <p style="color: #667eea; font-weight: bold; margin: 0 0 20px 0;">Apenas R$ 4,16/mês</p>
+                        <ul style="text-align: left; color: #555; list-style: none; padding: 0; margin: 0 0 25px 0; line-height: 2;">
+                            <li>✅ Processamento individual e em lote</li>
+                            <li>✅ Modo Contornos + Colorização</li>
+                            <li>✅ Download em MP4 e ZIP</li>
+                            <li>✅ Suporte prioritário</li>
+                            <li>✅ Todas as atualizações incluídas</li>
+                            <li>✅ Cancele quando quiser</li>
+                        </ul>
+                        <a href="{payment_url}" target="_blank" 
+                           style="display: block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 16px; border-radius: 50px; text-decoration: none; font-size: 1.2em; font-weight: bold; box-shadow: 0 8px 25px rgba(102,126,234,0.4); text-align: center;">
+                            🛒 Assinar Agora com 50% OFF
+                        </a>
+                        <p style="color: #999; font-size: 0.8em; margin-top: 12px;">Pagamento seguro via Stripe. Cartão ou Pix.</p>
+                    </div>
+                </div>
+            </div>
+            """)
+            
+            # --- FAQ ---
+            gr.HTML("""
+            <div style="margin-bottom: 40px; max-width: 700px; margin-left: auto; margin-right: auto;">
+                <h2 style="text-align: center; color: #1a1a2e; font-size: 2em; margin-bottom: 30px;">❓ Perguntas Frequentes</h2>
+                
+                <details style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;">
+                    <summary style="font-weight: bold; color: #1a1a2e; font-size: 1.05em;">Que tipo de imagem funciona melhor?</summary>
+                    <p style="color: #666; margin-top: 12px; line-height: 1.6;">Imagens com traços nítidos sobre fundo branco funcionam melhor: line art, ilustrações técnicas, diagramas, slides educativos e cartoons. Você pode gerar essas imagens usando IA (ChatGPT, Gemini, Midjourney) com os prompts que disponibilizamos acima.</p>
+                </details>
+                
+                <details style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;">
+                    <summary style="font-weight: bold; color: #1a1a2e; font-size: 1.05em;">Posso usar para Stories e Reels?</summary>
+                    <p style="color: #666; margin-top: 12px; line-height: 1.6;">Sim! O app aceita imagens em qualquer dimensão. Para Stories/Reels, use imagens 9:16 (1080x1920). Para YouTube e slides, use 16:9 (1920x1080).</p>
+                </details>
+                
+                <details style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;">
+                    <summary style="font-weight: bold; color: #1a1a2e; font-size: 1.05em;">Posso processar várias imagens de uma vez?</summary>
+                    <p style="color: #666; margin-top: 12px; line-height: 1.6;">Sim! O modo lote permite processar múltiplas imagens de uma vez e baixar todos os vídeos em um arquivo ZIP.</p>
+                </details>
+                
+                <details style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;">
+                    <summary style="font-weight: bold; color: #1a1a2e; font-size: 1.05em;">Como funciona o pagamento?</summary>
+                    <p style="color: #666; margin-top: 12px; line-height: 1.6;">O pagamento é processado pelo Stripe, a plataforma de pagamentos mais segura do mundo. Aceita cartão de crédito e Pix. A assinatura é anual e você pode cancelar a qualquer momento.</p>
+                </details>
+                
+                <details style="background: white; border-radius: 12px; padding: 20px; margin-bottom: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: pointer;">
+                    <summary style="font-weight: bold; color: #1a1a2e; font-size: 1.05em;">A promoção de 50% é por tempo limitado?</summary>
+                    <p style="color: #666; margin-top: 12px; line-height: 1.6;">Sim! O preço promocional de R$49,90/ano (50% de desconto) é exclusivo para os primeiros assinantes. O preço normal será R$97,90/ano.</p>
+                </details>
+            </div>
+            """)
+            
+            # --- SEÇÃO DE LOGIN (id para scroll) ---
+            gr.HTML('<div id="login-section"></div>')
+            
+            gr.HTML("""
+            <div style="background: linear-gradient(135deg, #f8f9ff 0%, #e8eaf6 100%); border-radius: 16px; padding: 30px; margin-bottom: 20px;">
+                <h2 style="text-align: center; color: #1a1a2e; margin: 0 0 20px 0;">🔐 Área do Assinante</h2>
             </div>
             """)
             
             with gr.Row():
                 with gr.Column(scale=1):
                     gr.HTML(f"""
-                    <div style="background: #f8f9fa; border-radius: 8px; padding: 20px;">
-                        <h3 style="color: #495057; margin: 0 0 15px 0;">📦 Como começar:</h3>
-                        <ol style="color: #495057; line-height: 1.8; font-size: 1.05em;">
-                            <li><strong>Clique no botão abaixo</strong> para ir ao checkout seguro</li>
-                            <li>Pague com <strong>cartão de crédito ou Pix</strong></li>
-                            <li>Após o pagamento, <strong>digite o email usado na compra</strong> no formulário ao lado</li>
-                            <li>Clique em <strong>"Ativar Acesso"</strong> e pronto!</li>
+                    <div style="background: white; border-radius: 12px; padding: 25px; box-shadow: 0 2px 10px rgba(0,0,0,0.06);">
+                        <h3 style="color: #495057; margin: 0 0 15px 0;">📦 Ainda não é assinante?</h3>
+                        <ol style="color: #495057; line-height: 2; font-size: 1em;">
+                            <li>Clique em <strong>"Assinar Agora"</strong></li>
+                            <li>Pague com <strong>cartão ou Pix</strong></li>
+                            <li>Digite o <strong>email da compra</strong> ao lado</li>
+                            <li>Insira o <strong>código de acesso</strong> e pronto!</li>
                         </ol>
-                        <div style="text-align: center; margin-top: 20px;">
-                            <a href="{license_manager.payment_link or 'https://buy.stripe.com/test_5kQ28rfZdd2RablaVicQU02'}" 
-                               target="_blank" 
-                               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 1.15em; font-weight: bold; box-shadow: 0 4px 15px rgba(102,126,234,0.4); transition: transform 0.2s;">
-                                🛒 Assinar - R$49,90/ano
+                        <div style="text-align: center; margin-top: 15px;">
+                            <a href="{payment_url}" target="_blank" 
+                               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; border-radius: 50px; text-decoration: none; font-size: 1.1em; font-weight: bold; box-shadow: 0 4px 15px rgba(102,126,234,0.3);">
+                                🛒 Assinar com 50% OFF
                             </a>
-                            <p style="color: #6c757d; margin-top: 10px; font-size: 0.9em;">Pagamento seguro via Stripe. Cancele quando quiser.</p>
                         </div>
                     </div>
                     """)
@@ -1198,7 +1396,7 @@ def create_commercial_interface():
                         )
                         
                         request_otp_btn = gr.Button(
-                            "📨 Enviar Código",
+                            "📨 Enviar Código de Acesso",
                             variant="primary",
                             size="lg"
                         )
@@ -1211,9 +1409,9 @@ def create_commercial_interface():
                     # ETAPA 2: Verificar OTP
                     with gr.Group(visible=False) as otp_step:
                         otp_input = gr.Textbox(
-                            label="� Código de 6 dígitos",
+                            label="🔐 Código de 6 dígitos",
                             placeholder="123456",
-                            info="Verifique seu email e insira o código",
+                            info="Insira o código exibido acima",
                             max_lines=1
                         )
                         
@@ -1230,21 +1428,13 @@ def create_commercial_interface():
                             visible=True
                         )
             
+            # --- FOOTER ---
             gr.HTML("""
-            <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 15px; margin-top: 20px;">
-                <h4 style="color: #0c5460; margin: 0 0 10px 0;">🎯 O que você recebe com a licença:</h4>
-                <div style="display: flex; flex-wrap: wrap; gap: 10px; color: #0c5460;">
-                    <div style="flex: 1; min-width: 200px;">
-                        <p style="margin: 5px 0;">✅ Processamento individual de imagens</p>
-                        <p style="margin: 5px 0;">✅ Processamento em lote (múltiplas imagens)</p>
-                        <p style="margin: 5px 0;">✅ Download automático em ZIP</p>
-                    </div>
-                    <div style="flex: 1; min-width: 200px;">
-                        <p style="margin: 5px 0;">✅ Modo Contornos + Colorização</p>
-                        <p style="margin: 5px 0;">✅ Suporte prioritário</p>
-                        <p style="margin: 5px 0;">✅ Todas as atualizações incluídas</p>
-                    </div>
-                </div>
+            <div style="background: #1a1a2e; color: white; border-radius: 12px; padding: 30px; margin-top: 30px; text-align: center;">
+                <h3 style="margin: 0 0 10px 0; opacity: 0.9;">🎨 Whiteboard Animation Pro</h3>
+                <p style="margin: 0; opacity: 0.6; font-size: 0.9em;">
+                    &copy; 2025 Ai Infinitus - Todos os direitos reservados
+                </p>
             </div>
             """)
         
@@ -1433,7 +1623,7 @@ def create_commercial_interface():
         verify_otp_btn.click(
             fn=verify_and_save_session,
             inputs=[email_input, otp_input],
-            outputs=[otp_result, session_id_hidden, activation_group, app_group]
+            outputs=[otp_result, session_id_hidden, landing_group, app_group]
         )
         
         # Evento de logout (se licenciado)
@@ -1454,7 +1644,7 @@ def create_commercial_interface():
             
             logout_btn.click(
                 fn=logout_and_clear_storage,
-                outputs=[activation_group, app_group, session_id_hidden]
+                outputs=[landing_group, app_group, session_id_hidden]
             )
         
         # Funções auxiliares para interface
