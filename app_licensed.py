@@ -994,7 +994,7 @@ def create_commercial_interface():
                             <li>Clique em <strong>"Ativar Acesso"</strong> e pronto!</li>
                         </ol>
                         <div style="text-align: center; margin-top: 20px;">
-                            <a href="{license_manager.payment_link or 'https://buy.stripe.com/test_fZucN56oD7Ix97h4wUcQU00'}" 
+                            <a href="{license_manager.payment_link or 'https://buy.stripe.com/test_5kQ28rfZdd2RablaVicQU02'}" 
                                target="_blank" 
                                style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 1.15em; font-weight: bold; box-shadow: 0 4px 15px rgba(102,126,234,0.4); transition: transform 0.2s;">
                                 🛒 Assinar - R$49,90/ano
