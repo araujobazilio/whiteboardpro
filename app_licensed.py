@@ -275,6 +275,11 @@ def generate_sketch_video(
         target_wd = (target_wd // split_len) * split_len
         target_ht = (target_ht // split_len) * split_len
         
+        # Garantir dimensões mínimas (evitar 0 ou negativo)
+        min_dim = split_len * 2
+        target_wd = max(target_wd, min_dim)
+        target_ht = max(target_ht, min_dim)
+        
         # Ajustar para valores pares (necessário para codecs)
         target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
         target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
