@@ -390,7 +390,7 @@ def generate_sketch_video(
                 region_mask = (labels == label_id)
                 region_size = np.sum(region_mask)
                 
-                if region_size < 50:  # Aumentar threshold para ignorar mais ruído
+                if region_size < 50:
                     continue
                 
                 ys, xs = np.where(region_mask)
@@ -409,7 +409,6 @@ def generate_sketch_video(
                     'size': region_size,
                     'cx': cx,
                     'cy': cy,
-                    'mask': region_mask,
                     'ys': ys,
                     'xs': xs
                 })
@@ -418,30 +417,66 @@ def generate_sketch_video(
             region_info.sort(key=lambda r: r['size'])
             
             total_regions = len(region_info)
-            color_skip = max(1, skip_rate)  # Aumentar skip para mais velocidade
-            color_counter = 0
+            color_skip = max(1, skip_rate // 2)
+            block_counter = 0
             
             progress(0.72, desc=f"🎨 Colorindo {total_regions} regiões...")
             
-            # Processar cada região
+            # Processar cada região por blocos de grid (meio termo: não pixel a pixel, nem tudo de uma vez)
             for reg_idx, region in enumerate(region_info):
                 ys, xs = region['ys'], region['xs']
                 
-                # Aplicar cor de uma vez (vetorizado - muito mais rápido!)
-                drawn_frame[ys, xs] = img[ys, xs]
+                # Agrupar pixels em blocos de grid usando NumPy (vetorizado, rápido)
+                grid_rows = ys // split_len
+                grid_cols = xs // split_len
+                grid_keys_arr = grid_rows * 10000 + grid_cols  # chave única por bloco
+                unique_keys = np.unique(grid_keys_arr)
                 
-                # Adicionar frame a cada N regiões (não a cada pixel)
-                color_counter += 1
-                if color_counter % color_skip == 0:
-                    # Posicionar mão no centroide da região
-                    hx = min(region['cx'], target_wd - 1)
-                    hy = min(region['cy'], target_ht - 1)
+                # Montar lista de blocos com seus pixels
+                blocks = []
+                for key in unique_keys:
+                    mask = grid_keys_arr == key
+                    blocks.append((ys[mask], xs[mask], int(key // 10000), int(key % 10000)))
+                
+                if len(blocks) == 0:
+                    continue
+                
+                # Ordenar blocos por proximidade (nearest neighbor simples)
+                ordered_blocks = [blocks[0]]
+                remaining = list(range(1, len(blocks)))
+                current_r, current_c = blocks[0][2], blocks[0][3]
+                
+                while remaining:
+                    best_idx = 0
+                    best_dist = float('inf')
+                    for i, idx in enumerate(remaining):
+                        dr = blocks[idx][2] - current_r
+                        dc = blocks[idx][3] - current_c
+                        dist = dr * dr + dc * dc
+                        if dist < best_dist:
+                            best_dist = dist
+                            best_idx = i
                     
-                    drawn_frame_with_hand = draw_hand_on_img(
-                        drawn_frame.copy(), hand.copy(), hx, hy,
-                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-                    )
-                    video_object.write(drawn_frame_with_hand)
+                    chosen = remaining.pop(best_idx)
+                    ordered_blocks.append(blocks[chosen])
+                    current_r, current_c = blocks[chosen][2], blocks[chosen][3]
+                
+                # Pintar bloco por bloco com animação
+                for block_ys, block_xs, gr_row, gr_col in ordered_blocks:
+                    # Aplicar cor do bloco inteiro de uma vez (vetorizado)
+                    drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
+                    
+                    block_counter += 1
+                    if block_counter % color_skip == 0:
+                        # Posicionar mão no centro do bloco
+                        hx = min(gr_col * split_len + split_len // 2, target_wd - 1)
+                        hy = min(gr_row * split_len + split_len // 2, target_ht - 1)
+                        
+                        drawn_frame_with_hand = draw_hand_on_img(
+                            drawn_frame.copy(), hand.copy(), hx, hy,
+                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                        )
+                        video_object.write(drawn_frame_with_hand)
                 
                 # Atualizar progresso
                 if reg_idx % 10 == 0 and total_regions > 0:
