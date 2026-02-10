@@ -78,7 +78,6 @@ class LicenseManager:
                     "activated_at": datetime.fromtimestamp(sub.created).isoformat(),
                     "status": "active",
                     "subscription_id": sub.id,
-                    "current_period_end": datetime.fromtimestamp(sub.current_period_end).isoformat(),
                     "_cache_time": datetime.now()
                 }
                 LicenseManager._validated_licenses[email] = result
