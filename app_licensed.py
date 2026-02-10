@@ -1089,6 +1089,7 @@ def verify_otp_action(email, otp_code):
     if success:
         info = license_manager.get_license_info()
         success_msg = f"✅ {message}\n\n🎉 **Bem-vindo!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
+        # Retornar session_id para ser salvo no localStorage via JavaScript
         return success_msg, session_id, gr.update(visible=False), gr.update(visible=True)
     else:
         return message, "", gr.update(visible=True), gr.update(visible=False)
@@ -1096,7 +1097,20 @@ def verify_otp_action(email, otp_code):
 def logout_action():
     """Faz logout do usuário"""
     license_manager.logout_user()
-    return gr.update(visible=True), gr.update(visible=False)
+    # Retornar vazio para limpar localStorage
+    return gr.update(visible=True), gr.update(visible=False), ""
+
+def restore_session_from_storage(session_id_stored):
+    """Restaura sessão do localStorage ao carregar a página"""
+    if not session_id_stored:
+        return None
+    
+    # Validar session_id no backend
+    success, email = license_manager.login_with_session(session_id_stored)
+    if success:
+        return session_id_stored
+    else:
+        return None
 
 # Interface Gradio Comercial
 def create_commercial_interface():
@@ -1106,6 +1120,37 @@ def create_commercial_interface():
     is_licensed = license_manager.is_licensed()
     
     with gr.Blocks(title="Whiteboard Animation Pro - Commercial", theme=gr.themes.Soft()) as app:
+        
+        # Estado para gerenciar sessão persistida
+        session_state = gr.State(value=None)
+        
+        # JavaScript para gerenciar localStorage
+        gr.HTML("""
+        <script>
+        function loadSessionFromStorage() {
+            const sessionId = localStorage.getItem('whiteboardpro_session_id');
+            return sessionId || '';
+        }
+        
+        function saveSessionToStorage(sessionId) {
+            if (sessionId) {
+                localStorage.setItem('whiteboardpro_session_id', sessionId);
+            }
+        }
+        
+        function clearSessionFromStorage() {
+            localStorage.removeItem('whiteboardpro_session_id');
+        }
+        
+        // Carregar sessão ao iniciar
+        window.addEventListener('load', function() {
+            const sessionId = loadSessionFromStorage();
+            if (sessionId) {
+                console.log('Sessão restaurada do localStorage');
+            }
+        });
+        </script>
+        """)
         
         # Cabeçalho profissional
         gr.HTML("""
@@ -1373,17 +1418,48 @@ def create_commercial_interface():
         )
         
         # ETAPA 2: Verificar OTP e fazer login
+        def verify_and_save_session(email, otp_code):
+            """Verifica OTP, faz login e salva session_id no localStorage"""
+            otp_result_msg, session_id, activation_vis, app_vis = verify_otp_action(email, otp_code)
+            
+            # Se login bem-sucedido, salvar session_id no localStorage via JavaScript
+            if session_id:
+                # Adicionar script para salvar no localStorage
+                save_script = f"""
+                <script>
+                saveSessionToStorage('{session_id}');
+                console.log('Session salva no localStorage');
+                </script>
+                """
+                otp_result_msg = otp_result_msg + "\n" + save_script
+            
+            return otp_result_msg, session_id, activation_vis, app_vis
+        
         verify_otp_btn.click(
-            fn=verify_otp_action,
+            fn=verify_and_save_session,
             inputs=[email_input, otp_input],
             outputs=[otp_result, session_id_hidden, activation_group, app_group]
         )
         
         # Evento de logout (se licenciado)
         if is_licensed:
+            def logout_and_clear_storage():
+                """Faz logout e limpa session_id do localStorage"""
+                activation_vis, app_vis, _ = logout_action()
+                
+                # Adicionar script para limpar localStorage
+                clear_script = """
+                <script>
+                clearSessionFromStorage();
+                console.log('Session removida do localStorage');
+                </script>
+                """
+                
+                return activation_vis, app_vis, clear_script
+            
             logout_btn.click(
-                fn=logout_action,
-                outputs=[activation_group, app_group]
+                fn=logout_and_clear_storage,
+                outputs=[activation_group, app_group, session_id_hidden]
             )
         
         # Funções auxiliares para interface
