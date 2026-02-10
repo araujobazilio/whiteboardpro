@@ -249,18 +249,23 @@ def generate_sketch_video(
         
         img_ht, img_wd = img.shape[0], img.shape[1]
         
-        # Ajustar resolução (limitar a 1280x720 máximo para performance)
+        # Ajustar resolução (limitar a 1920x1080 máximo para balancear qualidade e performance)
         aspect_ratio = img_wd / img_ht
         
-        # Limitar altura máxima a 720p para performance
-        MAX_HEIGHT = 720
-        if img_ht > MAX_HEIGHT:
-            target_ht = MAX_HEIGHT
-            target_wd = int(target_ht * aspect_ratio)
-            # Garantir que não exceda 1280 de largura
-            if target_wd > 1280:
-                target_wd = 1280
+        # Limitar a 1080p para qualidade HD excelente
+        MAX_HEIGHT = 1080
+        MAX_WIDTH = 1920
+        
+        if img_ht > MAX_HEIGHT or img_wd > MAX_WIDTH:
+            # Calcular nova dimensão mantendo aspecto
+            if img_wd / MAX_WIDTH > img_ht / MAX_HEIGHT:
+                # Largura é o fator limitante
+                target_wd = MAX_WIDTH
                 target_ht = int(target_wd / aspect_ratio)
+            else:
+                # Altura é o fator limitante
+                target_ht = MAX_HEIGHT
+                target_wd = int(target_ht * aspect_ratio)
         else:
             target_ht = img_ht
             target_wd = img_wd
@@ -269,7 +274,7 @@ def generate_sketch_video(
         target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
         target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
         
-        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht}...")
+        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht} (Full HD)...")
         img = cv2.resize(img, (target_wd, target_ht))
         
         # Processar imagem
