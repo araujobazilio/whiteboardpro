@@ -249,12 +249,27 @@ def generate_sketch_video(
         
         img_ht, img_wd = img.shape[0], img.shape[1]
         
-        # Ajustar resolução
+        # Ajustar resolução (limitar a 1280x720 máximo para performance)
         aspect_ratio = img_wd / img_ht
-        target_ht = find_nearest_res(img_ht)
-        target_wd = find_nearest_res(int(target_ht * aspect_ratio))
         
-        progress(0.05, desc=f"🔧 Redimensionando para {target_wd}x{target_ht}...")
+        # Limitar altura máxima a 720p para performance
+        MAX_HEIGHT = 720
+        if img_ht > MAX_HEIGHT:
+            target_ht = MAX_HEIGHT
+            target_wd = int(target_ht * aspect_ratio)
+            # Garantir que não exceda 1280 de largura
+            if target_wd > 1280:
+                target_wd = 1280
+                target_ht = int(target_wd / aspect_ratio)
+        else:
+            target_ht = img_ht
+            target_wd = img_wd
+        
+        # Ajustar para valores pares (necessário para codecs)
+        target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
+        target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
+        
+        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht}...")
         img = cv2.resize(img, (target_wd, target_ht))
         
         # Processar imagem
@@ -345,10 +360,8 @@ def generate_sketch_video(
         if draw_mode == "Contornos + Colorização":
             progress(0.7, desc="🎨 Detectando regiões para colorir...")
             
-            # Inverter threshold para encontrar regiões fechadas (branco = regiões, preto = contornos)
+            # Inverter threshold para encontrar regiões fechadas
             img_thresh_inv = cv2.bitwise_not(img_thresh)
-            
-            # Dilatar levemente os contornos para fechar gaps pequenos
             kernel = np.ones((3, 3), np.uint8)
             img_thresh_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
             img_thresh_for_regions = cv2.bitwise_not(img_thresh_dilated)
@@ -356,16 +369,24 @@ def generate_sketch_video(
             # Encontrar regiões conectadas
             num_labels, labels = cv2.connectedComponents(img_thresh_for_regions)
             
-            # Calcular info de cada região (tamanho, centroide, bounding box)
+            # Calcular info de cada região
             region_info = []
-            for label_id in range(1, num_labels):  # Pular label 0 (fundo/contornos)
+            for label_id in range(1, num_labels):
                 region_mask = (labels == label_id)
                 region_size = np.sum(region_mask)
                 
-                if region_size < 20:  # Ignorar regiões muito pequenas (ruído)
+                if region_size < 50:  # Aumentar threshold para ignorar mais ruído
                     continue
                 
                 ys, xs = np.where(region_mask)
+                if len(ys) == 0:
+                    continue
+                    
+                # Pular regiões brancas/quase brancas
+                mean_color = np.mean(img[ys, xs], axis=0)
+                if np.all(mean_color > 245):
+                    continue
+                
                 cy, cx = int(np.mean(ys)), int(np.mean(xs))
                 
                 region_info.append({
@@ -373,87 +394,44 @@ def generate_sketch_video(
                     'size': region_size,
                     'cx': cx,
                     'cy': cy,
-                    'mask': region_mask
+                    'mask': region_mask,
+                    'ys': ys,
+                    'xs': xs
                 })
             
-            # Ordenar: regiões menores primeiro (objetos), maiores por último (fundo)
+            # Ordenar por tamanho (menores primeiro)
             region_info.sort(key=lambda r: r['size'])
             
             total_regions = len(region_info)
-            color_skip = max(1, skip_rate // 2)
+            color_skip = max(1, skip_rate)  # Aumentar skip para mais velocidade
             color_counter = 0
             
             progress(0.72, desc=f"🎨 Colorindo {total_regions} regiões...")
             
+            # Processar cada região
             for reg_idx, region in enumerate(region_info):
-                region_mask = region['mask']
+                ys, xs = region['ys'], region['xs']
                 
-                # Encontrar os pixels desta região e dividi-los em blocos para animar
-                ys, xs = np.where(region_mask)
+                # Aplicar cor de uma vez (vetorizado - muito mais rápido!)
+                drawn_frame[ys, xs] = img[ys, xs]
                 
-                if len(ys) == 0:
-                    continue
-                
-                # Pular regiões brancas/quase brancas (canvas já é branco)
-                mean_color = np.mean(img[ys, xs], axis=0)
-                if np.all(mean_color > 240):
-                    continue
-                
-                # Agrupar pixels em mini-blocos baseados no grid para animação suave
-                pixel_grids = {}
-                for py, px in zip(ys, xs):
-                    grid_row = py // split_len
-                    grid_col = px // split_len
-                    key = (grid_row, grid_col)
-                    if key not in pixel_grids:
-                        pixel_grids[key] = []
-                    pixel_grids[key].append((py, px))
-                
-                # Ordenar grids por distância euclidiana para movimento natural
-                grid_keys = list(pixel_grids.keys())
-                if len(grid_keys) == 0:
-                    continue
-                
-                grid_coords = np.array(grid_keys)
-                ordered_grids = []
-                current_idx = 0
-                remaining = list(range(len(grid_coords)))
-                
-                while remaining:
-                    ordered_grids.append(remaining[current_idx])
-                    current_pos = grid_coords[remaining[current_idx]].copy()
-                    remaining.pop(current_idx)
+                # Adicionar frame a cada N regiões (não a cada pixel)
+                color_counter += 1
+                if color_counter % color_skip == 0:
+                    # Posicionar mão no centroide da região
+                    hx = min(region['cx'], target_wd - 1)
+                    hy = min(region['cy'], target_ht - 1)
                     
-                    if remaining:
-                        remaining_coords = grid_coords[remaining]
-                        dists = euc_dist(remaining_coords, current_pos)
-                        current_idx = np.argmin(dists)
+                    drawn_frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(), hx, hy,
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    video_object.write(drawn_frame_with_hand)
                 
-                # Pintar cada mini-bloco desta região
-                for grid_idx in ordered_grids:
-                    grid_key = grid_keys[grid_idx]
-                    pixels = pixel_grids[grid_key]
-                    
-                    # Aplicar cor original nos pixels desta região neste grid
-                    for py, px in pixels:
-                        drawn_frame[py, px] = img[py, px]
-                    
-                    color_counter += 1
-                    if color_counter % color_skip == 0:
-                        # Posicionar a mão no centro do grid
-                        hx = min(grid_key[1] * split_len + split_len // 2, target_wd - 1)
-                        hy = min(grid_key[0] * split_len + split_len // 2, target_ht - 1)
-                        
-                        drawn_frame_with_hand = draw_hand_on_img(
-                            drawn_frame.copy(), hand.copy(), hx, hy,
-                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-                        )
-                        video_object.write(drawn_frame_with_hand)
-                
-                # Atualizar progresso por região
-                if total_regions > 0:
+                # Atualizar progresso
+                if reg_idx % 10 == 0 and total_regions > 0:
                     prog_pct = 0.72 + (0.18 * (reg_idx + 1) / total_regions)
-                    progress(prog_pct, desc=f"🎨 Colorindo região {reg_idx + 1}/{total_regions}...")
+                    progress(prog_pct, desc=f"🎨 Colorindo... {reg_idx + 1}/{total_regions}")
         
         # Adicionar imagem final
         progress(0.9, desc="🖼️ Adicionando imagem final...")
