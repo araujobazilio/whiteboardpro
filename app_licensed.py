@@ -209,13 +209,8 @@ class LicenseManager:
         # Gerar OTP
         otp_code = self.generate_otp(email)
         
-        # Em produção, aqui você enviaria o OTP por email via SendGrid/Stripe
-        # Por enquanto, vamos simular (em modo teste, mostramos o código na tela)
-        if self._demo_mode:
-            return True, f"✅ **MODO TESTE - Código exibido abaixo:**\n\n🔐 **{otp_code}**\n\n(Válido por 10 minutos)\n\n*Em produção, o código seria enviado para seu email*"
-        else:
-            # Em produção, o código seria enviado por email
-            return True, f"✅ Código enviado para {email}\n\nVerifique seu email e insira o código de 6 dígitos."
+        # Exibir código na tela (futuramente pode ser enviado por email via SendGrid)
+        return True, f"✅ Seu código de acesso:\n\n🔐 **{otp_code}**\n\n⏱️ Válido por 10 minutos. Insira abaixo para entrar."
     
     def verify_otp_and_login(self, email, otp_code):
         """Verifica OTP e cria sessão se válido"""
