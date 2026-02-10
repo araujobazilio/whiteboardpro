@@ -270,6 +270,11 @@ def generate_sketch_video(
             target_ht = img_ht
             target_wd = img_wd
         
+        # GARANTIR que dimensões sejam divisíveis pelo split_len
+        # Isso evita o erro "array split does not result in an equal division"
+        target_wd = (target_wd // split_len) * split_len
+        target_ht = (target_ht // split_len) * split_len
+        
         # Ajustar para valores pares (necessário para codecs)
         target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
         target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
