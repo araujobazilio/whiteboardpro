@@ -962,27 +962,35 @@ def create_commercial_interface():
                     gr.HTML("""
                     <div style="background: #f8f9fa; border-radius: 8px; padding: 20px;">
                         <h3 style="color: #495057; margin: 0 0 15px 0;">📦 Como obter sua licença:</h3>
-                        <ol style="color: #495057; line-height: 1.6;">
-                            <li>Adquira sua licença em nossa página de vendas</li>
-                            <li>Você receberá a chave de licença por email automaticamente</li>
+                        <ol style="color: #495057; line-height: 1.8; font-size: 1.05em;">
+                            <li><strong>Adquira sua licença</strong> clicando no botão abaixo</li>
+                            <li>Complete o pagamento via <strong>PayPal</strong></li>
+                            <li>Você receberá a <strong>chave de licença por email</strong> automaticamente</li>
                             <li>Insira a chave e o email no formulário ao lado</li>
-                            <li>Clique em "Ativar Licença" e pronto!</li>
+                            <li>Clique em <strong>"Ativar Licença"</strong> e pronto!</li>
                         </ol>
+                        <div style="text-align: center; margin-top: 20px;">
+                            <a href="https://aiinfinitus.lemonsqueezy.com/checkout/buy/8c99a0fb-9f92-4975-b537-2d10eb3afb72" 
+                               target="_blank" 
+                               style="display: inline-block; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 14px 32px; border-radius: 8px; text-decoration: none; font-size: 1.15em; font-weight: bold; box-shadow: 0 4px 15px rgba(102,126,234,0.4); transition: transform 0.2s;">
+                                🛒 Comprar Licença - R$49,90/ano
+                            </a>
+                        </div>
                     </div>
                     """)
                 
                 with gr.Column(scale=1):
-                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Ativar Licença</h3>")
+                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Já tem uma licença? Ative aqui:</h3>")
                     
                     with gr.Group():
                         license_key_input = gr.Textbox(
                             label="🔑 Chave de Licença",
-                            placeholder="Digite sua chave de licença",
+                            placeholder="Cole aqui a chave recebida por email",
                             type="password"
                         )
                         
                         email_input = gr.Textbox(
-                            label="📧 Email Cadastrado",
+                            label="📧 Email usado na compra",
                             placeholder="seu@email.com"
                         )
                         
@@ -997,18 +1005,21 @@ def create_commercial_interface():
                             visible=True
                         )
             
-            # Preview limitado
             gr.HTML("""
             <div style="background: #d1ecf1; border: 1px solid #bee5eb; border-radius: 8px; padding: 15px; margin-top: 20px;">
-                <h4 style="color: #0c5460; margin: 0 0 10px 0;">👁️ Versão Demo</h4>
-                <p style="color: #0c5460; margin: 0;">Após ativar sua licença, você terá acesso a:</p>
-                <ul style="color: #0c5460; margin: 10px 0 0 20px;">
-                    <li>✅ Processamento individual de imagens</li>
-                    <li>✅ Processamento em lote (múltiplas imagens)</li>
-                    <li>✅ Download automático em ZIP</li>
-                    <li>✅ Suporte prioritário</li>
-                    <li>✅ Atualizações vitalícias</li>
-                </ul>
+                <h4 style="color: #0c5460; margin: 0 0 10px 0;">🎯 O que você recebe com a licença:</h4>
+                <div style="display: flex; flex-wrap: wrap; gap: 10px; color: #0c5460;">
+                    <div style="flex: 1; min-width: 200px;">
+                        <p style="margin: 5px 0;">✅ Processamento individual de imagens</p>
+                        <p style="margin: 5px 0;">✅ Processamento em lote (múltiplas imagens)</p>
+                        <p style="margin: 5px 0;">✅ Download automático em ZIP</p>
+                    </div>
+                    <div style="flex: 1; min-width: 200px;">
+                        <p style="margin: 5px 0;">✅ Modo Contornos + Colorização</p>
+                        <p style="margin: 5px 0;">✅ Suporte prioritário</p>
+                        <p style="margin: 5px 0;">✅ Todas as atualizações incluídas</p>
+                    </div>
+                </div>
             </div>
             """)
         
@@ -1154,8 +1165,8 @@ def create_commercial_interface():
             <div style="background: #f8f9fa; border-radius: 8px; padding: 20px; margin-top: 20px; text-align: center;">
                 <h3 style="color: #495057; margin: 0 0 10px 0;">🎯 Whiteboard Animation Pro</h3>
                 <p style="color: #6c757d; margin: 0;">
-                    Versão Comercial - Todos os direitos reservados<br>
-                    Suporte: WhatsApp (XX) XXXXX-XXXX | Email: suporte@whiteboardpro.com
+                    Versão Comercial &copy; 2025 Ai Infinitus - Todos os direitos reservados<br>
+                    <a href="https://aiinfinitus.lemonsqueezy.com" target="_blank" style="color: #667eea; text-decoration: none;">aiinfinitus.lemonsqueezy.com</a>
                 </p>
             </div>
             """)
@@ -1194,7 +1205,7 @@ def create_commercial_interface():
             
             # Gerar estatísticas
             stats = f"📊 Estatísticas do Processamento:\\n"
-            stats += f"🔥 Processamento paralelo com 4 threads\\n"
+            stats += f"🔥 Processamento otimizado com resolução HD\\n"
             stats += f"⚡ Otimização automática de recursos"
             
             if zip_path:
