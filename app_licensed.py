@@ -368,6 +368,133 @@ def common_divisors(num1, num2):
     common_divs.sort()
     return common_divs
 
+def ease_in_out(t):
+    """Curva ease-in-out sigmoide: começa devagar, acelera no meio, desacelera no final.
+    t deve estar entre 0.0 e 1.0. Retorna valor entre 0.0 e 1.0."""
+    t = np.clip(t, 0.0, 1.0)
+    return t * t * (3.0 - 2.0 * t)
+
+def extract_and_order_contours(img_thresh):
+    """Detecta contornos individuais na imagem e ordena de cima para baixo, esquerda para direita.
+    Retorna lista de contornos, cada um com seus pontos ordenados."""
+    # Inverter para findContours (precisa fundo preto, objeto branco)
+    thresh_inv = cv2.bitwise_not(img_thresh)
+    
+    # Encontrar contornos
+    contours, hierarchy = cv2.findContours(thresh_inv, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    
+    if not contours:
+        return []
+    
+    # Filtrar contornos muito pequenos (ruído)
+    min_contour_area = 20
+    filtered = []
+    for cnt in contours:
+        if cv2.contourArea(cnt) >= min_contour_area or len(cnt) >= 10:
+            filtered.append(cnt)
+    
+    if not filtered:
+        # Se todos foram filtrados, usar os originais
+        filtered = list(contours)
+    
+    # Ordenar por posição: topo para baixo, esquerda para direita
+    def contour_sort_key(cnt):
+        M = cv2.moments(cnt)
+        if M["m00"] > 0:
+            cy = int(M["m01"] / M["m00"])
+            cx = int(M["m10"] / M["m00"])
+        else:
+            cy = cnt[:, 0, 1].min()
+            cx = cnt[:, 0, 0].min()
+        # Agrupar por faixas verticais (a cada 50px) para efeito natural
+        row_band = cy // 50
+        return (row_band, cx)
+    
+    filtered.sort(key=contour_sort_key)
+    return filtered
+
+def get_pen_tip_offset(hand_ht, hand_wd):
+    """Calcula o offset para posicionar a ponta da caneta no ponto de desenho.
+    A mão segura a caneta, e a ponta fica no canto superior-esquerdo da imagem da mão.
+    Retorna (offset_x, offset_y) para subtrair das coordenadas de desenho."""
+    # A ponta da caneta fica aproximadamente no canto superior-esquerdo da imagem da mão
+    # Offset para que a ponta da caneta coincida com o ponto (x, y) de desenho
+    offset_x = int(hand_wd * 0.05)
+    offset_y = int(hand_ht * 0.05)
+    return offset_x, offset_y
+
+def sample_contour_points(contour, step=2):
+    """Amostra pontos ao longo de um contorno com espaçamento uniforme.
+    Retorna array de pontos (x, y)."""
+    pts = contour.reshape(-1, 2)
+    if len(pts) <= step:
+        return pts
+    # Amostrar a cada 'step' pontos para suavidade
+    indices = np.arange(0, len(pts), step)
+    if indices[-1] != len(pts) - 1:
+        indices = np.append(indices, len(pts) - 1)
+    return pts[indices]
+
+def interpolate_path_with_easing(points, num_frames):
+    """Distribui pontos ao longo do caminho usando ease-in-out.
+    Retorna lista de (x, y) para cada frame, com densidade proporcional à curva de easing."""
+    if len(points) < 2 or num_frames < 2:
+        return points.tolist() if hasattr(points, 'tolist') else list(points)
+    
+    # Calcular distância acumulada ao longo do caminho
+    diffs = np.diff(points, axis=0).astype(np.float64)
+    segment_lengths = np.sqrt(np.sum(diffs**2, axis=1))
+    cumulative_dist = np.concatenate([[0], np.cumsum(segment_lengths)])
+    total_dist = cumulative_dist[-1]
+    
+    if total_dist < 1:
+        return points.tolist() if hasattr(points, 'tolist') else list(points)
+    
+    # Normalizar distâncias para [0, 1]
+    norm_dist = cumulative_dist / total_dist
+    
+    # Gerar t uniforme [0, 1] para cada frame e aplicar easing
+    t_linear = np.linspace(0, 1, num_frames)
+    t_eased = np.array([ease_in_out(t) for t in t_linear])
+    
+    # Interpolar posições no caminho usando as distâncias eased
+    result = []
+    for t in t_eased:
+        # Encontrar segmento onde t cai
+        idx = np.searchsorted(norm_dist, t, side='right') - 1
+        idx = np.clip(idx, 0, len(points) - 2)
+        
+        # Interpolar dentro do segmento
+        seg_start = norm_dist[idx]
+        seg_end = norm_dist[idx + 1]
+        seg_len = seg_end - seg_start
+        
+        if seg_len > 0:
+            local_t = (t - seg_start) / seg_len
+        else:
+            local_t = 0
+        
+        x = int(points[idx][0] + local_t * (points[idx + 1][0] - points[idx][0]))
+        y = int(points[idx][1] + local_t * (points[idx + 1][1] - points[idx][1]))
+        result.append((x, y))
+    
+    return result
+
+def render_contour_progressively(contour_pts, img_thresh, drawn_frame, thickness=1):
+    """Renderiza pixels do contorno até o ponto dado.
+    Desenha os pixels pretos do threshold que pertencem ao contorno."""
+    # Criar máscara do contorno
+    mask = np.zeros(img_thresh.shape, dtype=np.uint8)
+    pts_array = contour_pts.reshape(-1, 1, 2) if len(contour_pts.shape) == 2 else contour_pts
+    cv2.drawContours(mask, [pts_array], -1, 255, thickness=cv2.FILLED)
+    cv2.drawContours(mask, [pts_array], -1, 255, thickness=2)
+    
+    # Aplicar pixels pretos do threshold onde a máscara está ativa
+    black_pixels = (img_thresh < 10) & (mask > 0)
+    drawn_frame[black_pixels] = [0, 0, 0]
+    
+    return drawn_frame
+
 def generate_sketch_video(
     image_path,
     split_len,
@@ -465,63 +592,96 @@ def generate_sketch_video(
         # Canvas branco
         drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
         
-        # Dividir em grids
-        progress(0.25, desc="📐 Dividindo imagem em grids...")
-        n_cuts_vertical = int(math.ceil(target_ht / split_len))
-        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        # === FASE 1: DESENHO POR CONTORNOS INDIVIDUAIS ===
+        progress(0.25, desc="� Detectando contornos individuais...")
+        contours = extract_and_order_contours(img_thresh)
+        total_contours = len(contours)
         
-        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
-        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
-        
-        # Encontrar grids com pixels pretos
-        cut_having_black = (grid_of_cuts < 10) * 1
-        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
-        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
-        
-        total_cuts = len(cut_black_indices)
-        selected_ind = 0
-        counter = 0
-        
-        progress(0.3, desc=f"✏️ Desenhando ({total_cuts} grids)...")
-        
-        # Desenhar
-        while len(cut_black_indices) > 1:
-            selected_ind_val = cut_black_indices[selected_ind].copy()
-            range_v_start = selected_ind_val[0] * split_len
-            range_v_end = range_v_start + split_len
-            range_h_start = selected_ind_val[1] * split_len
-            range_h_end = range_h_start + split_len
+        if total_contours == 0:
+            progress(0.3, desc="⚠️ Nenhum contorno detectado, usando fallback de grid...")
+            # Fallback: desenhar toda a imagem threshold de uma vez
+            black_pixels = img_thresh < 10
+            drawn_frame[black_pixels] = [0, 0, 0]
+            for i in range(frame_rate * 2):
+                video_object.write(drawn_frame)
+        else:
+            # Calcular offset da ponta da caneta
+            pen_offset_x, pen_offset_y = get_pen_tip_offset(hand_ht, hand_wd)
             
-            temp_drawing = np.zeros((split_len, split_len, 3))
-            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            # Calcular frames por contorno baseado no tamanho relativo
+            contour_lengths = []
+            for cnt in contours:
+                contour_lengths.append(max(len(cnt), 1))
+            total_points = sum(contour_lengths)
             
-            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
+            # Frames totais disponíveis para desenho (reservar 30% para colorização e final)
+            total_draw_frames = max(100, int((total_points / skip_rate) * 0.8))
             
-            hand_coord_x = range_h_start + int(split_len / 2)
-            hand_coord_y = range_v_start + int(split_len / 2)
+            progress(0.3, desc=f"✏️ Desenhando {total_contours} objetos...")
             
-            drawn_frame_with_hand = draw_hand_on_img(
-                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
-                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-            )
+            frames_written = 0
             
-            cut_black_indices[selected_ind] = cut_black_indices[-1]
-            cut_black_indices = cut_black_indices[:-1]
-            
-            del selected_ind
-            
-            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
-            selected_ind = np.argmin(euc_arr)
-            
-            counter += 1
-            if counter % skip_rate == 0:
-                video_object.write(drawn_frame_with_hand)
-            
-            if counter % 100 == 0:
-                prog_percent = 0.3 + (0.6 * (1 - len(cut_black_indices) / total_cuts))
-                progress(prog_percent, desc=f"✏️ Desenhando... {100 * (1 - len(cut_black_indices) / total_cuts):.1f}%")
+            for cnt_idx, contour in enumerate(contours):
+                # Calcular frames para este contorno proporcional ao seu tamanho
+                cnt_len = len(contour)
+                frames_for_contour = max(3, int((cnt_len / total_points) * total_draw_frames))
+                
+                # Amostrar pontos do contorno
+                sampled_pts = sample_contour_points(contour, step=max(1, skip_rate))
+                
+                if len(sampled_pts) < 2:
+                    # Contorno muito pequeno: renderizar de uma vez
+                    render_contour_progressively(contour, img_thresh, drawn_frame)
+                    hand_x = max(0, int(sampled_pts[0][0]) - pen_offset_x)
+                    hand_y = max(0, int(sampled_pts[0][1]) - pen_offset_y)
+                    drawn_frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(), hand_x, hand_y,
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    video_object.write(drawn_frame_with_hand)
+                    frames_written += 1
+                    continue
+                
+                # Interpolar caminho com easing (ease-in-out)
+                eased_positions = interpolate_path_with_easing(sampled_pts, frames_for_contour)
+                
+                # Pontos originais do contorno para renderização progressiva
+                all_cnt_pts = contour.reshape(-1, 2)
+                total_cnt_pts = len(all_cnt_pts)
+                
+                for frame_idx, (hx, hy) in enumerate(eased_positions):
+                    # Calcular quantos pontos do contorno revelar neste frame
+                    progress_ratio = (frame_idx + 1) / len(eased_positions)
+                    pts_to_reveal = int(progress_ratio * total_cnt_pts)
+                    pts_to_reveal = max(1, min(pts_to_reveal, total_cnt_pts))
+                    
+                    # Renderizar pixels progressivamente: desenhar linha do contorno até o ponto atual
+                    partial_pts = all_cnt_pts[:pts_to_reveal]
+                    if len(partial_pts) >= 2:
+                        for i in range(len(partial_pts) - 1):
+                            cv2.line(drawn_frame, 
+                                     tuple(partial_pts[i].astype(int)), 
+                                     tuple(partial_pts[i+1].astype(int)), 
+                                     (0, 0, 0), 1)
+                    
+                    # Posicionar mão com offset da ponta da caneta
+                    hand_x = max(0, min(hx - pen_offset_x, target_wd - 1))
+                    hand_y = max(0, min(hy - pen_offset_y, target_ht - 1))
+                    
+                    drawn_frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(), hand_x, hand_y,
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    video_object.write(drawn_frame_with_hand)
+                    frames_written += 1
+                
+                # Garantir que o contorno completo está renderizado (preencher pixels do threshold)
+                render_contour_progressively(contour, img_thresh, drawn_frame)
+                
+                # Atualizar progresso
+                if cnt_idx % max(1, total_contours // 20) == 0:
+                    prog_pct = 0.3 + (0.6 * (cnt_idx + 1) / total_contours)
+                    progress(prog_pct, desc=f"✏️ Desenhando objeto {cnt_idx + 1}/{total_contours}...")
         
         # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
         if draw_mode == "Contornos + Colorização":
@@ -864,56 +1024,83 @@ def generate_sketch_video_single(
         # Canvas branco
         drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
         
-        # Dividir em grids
-        n_cuts_vertical = int(math.ceil(target_ht / split_len))
-        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        # === FASE 1: DESENHO POR CONTORNOS INDIVIDUAIS ===
+        contours = extract_and_order_contours(img_thresh)
+        total_contours = len(contours)
         
-        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
-        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
-        
-        # Encontrar grids com pixels pretos
-        cut_having_black = (grid_of_cuts < 10) * 1
-        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
-        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
-        
-        total_cuts = len(cut_black_indices)
-        selected_ind = 0
-        counter = 0
-        
-        # Desenhar
-        while len(cut_black_indices) > 1:
-            selected_ind_val = cut_black_indices[selected_ind].copy()
-            range_v_start = selected_ind_val[0] * split_len
-            range_v_end = range_v_start + split_len
-            range_h_start = selected_ind_val[1] * split_len
-            range_h_end = range_h_start + split_len
+        if total_contours == 0:
+            # Fallback: desenhar toda a imagem threshold de uma vez
+            black_pixels = img_thresh < 10
+            drawn_frame[black_pixels] = [0, 0, 0]
+            for i in range(frame_rate * 2):
+                video_object.write(drawn_frame)
+        else:
+            # Calcular offset da ponta da caneta
+            pen_offset_x, pen_offset_y = get_pen_tip_offset(hand_ht, hand_wd)
             
-            temp_drawing = np.zeros((split_len, split_len, 3))
-            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            # Calcular frames por contorno baseado no tamanho relativo
+            contour_lengths = []
+            for cnt in contours:
+                contour_lengths.append(max(len(cnt), 1))
+            total_points = sum(contour_lengths)
             
-            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
+            # Frames totais disponíveis para desenho
+            total_draw_frames = max(100, int((total_points / skip_rate) * 0.8))
             
-            hand_coord_x = range_h_start + int(split_len / 2)
-            hand_coord_y = range_v_start + int(split_len / 2)
-            
-            drawn_frame_with_hand = draw_hand_on_img(
-                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
-                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-            )
-            
-            cut_black_indices[selected_ind] = cut_black_indices[-1]
-            cut_black_indices = cut_black_indices[:-1]
-            
-            del selected_ind
-            
-            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
-            selected_ind = np.argmin(euc_arr)
-            
-            counter += 1
-            if counter % skip_rate == 0:
-                video_object.write(drawn_frame_with_hand)
+            for cnt_idx, contour in enumerate(contours):
+                # Calcular frames para este contorno proporcional ao seu tamanho
+                cnt_len = len(contour)
+                frames_for_contour = max(3, int((cnt_len / total_points) * total_draw_frames))
+                
+                # Amostrar pontos do contorno
+                sampled_pts = sample_contour_points(contour, step=max(1, skip_rate))
+                
+                if len(sampled_pts) < 2:
+                    # Contorno muito pequeno: renderizar de uma vez
+                    render_contour_progressively(contour, img_thresh, drawn_frame)
+                    hand_x = max(0, int(sampled_pts[0][0]) - pen_offset_x)
+                    hand_y = max(0, int(sampled_pts[0][1]) - pen_offset_y)
+                    drawn_frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(), hand_x, hand_y,
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    video_object.write(drawn_frame_with_hand)
+                    continue
+                
+                # Interpolar caminho com easing (ease-in-out)
+                eased_positions = interpolate_path_with_easing(sampled_pts, frames_for_contour)
+                
+                # Pontos originais do contorno para renderização progressiva
+                all_cnt_pts = contour.reshape(-1, 2)
+                total_cnt_pts = len(all_cnt_pts)
+                
+                for frame_idx, (hx, hy) in enumerate(eased_positions):
+                    # Calcular quantos pontos do contorno revelar neste frame
+                    progress_ratio = (frame_idx + 1) / len(eased_positions)
+                    pts_to_reveal = int(progress_ratio * total_cnt_pts)
+                    pts_to_reveal = max(1, min(pts_to_reveal, total_cnt_pts))
+                    
+                    # Renderizar pixels progressivamente
+                    partial_pts = all_cnt_pts[:pts_to_reveal]
+                    if len(partial_pts) >= 2:
+                        for i in range(len(partial_pts) - 1):
+                            cv2.line(drawn_frame, 
+                                     tuple(partial_pts[i].astype(int)), 
+                                     tuple(partial_pts[i+1].astype(int)), 
+                                     (0, 0, 0), 1)
+                    
+                    # Posicionar mão com offset da ponta da caneta
+                    hand_x = max(0, min(hx - pen_offset_x, target_wd - 1))
+                    hand_y = max(0, min(hy - pen_offset_y, target_ht - 1))
+                    
+                    drawn_frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(), hand_x, hand_y,
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    video_object.write(drawn_frame_with_hand)
+                
+                # Garantir que o contorno completo está renderizado
+                render_contour_progressively(contour, img_thresh, drawn_frame)
         
         # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
         if draw_mode == "Contornos + Colorização":
@@ -969,10 +1156,8 @@ def generate_sketch_video_single(
                 if len(blocks) == 0:
                     continue
                 
-                # Ordenar blocos por linha e coluna (rápido e natural)
                 blocks.sort(key=lambda b: (b[2], b[3]))
                 
-                # Pintar bloco por bloco com animação
                 for block_ys, block_xs, gr_row, gr_col in blocks:
                     drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
                     
