@@ -17,22 +17,101 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from PIL import Image
 import shutil
 import stripe
+import random
+import string
 from datetime import datetime, timedelta
 
 # Sistema de Licenciamento Integrado (Stripe API)
 
 class LicenseManager:
     _validated_licenses = {}
+    _otp_codes = {}  # {email: {"code": "123456", "created_at": datetime, "attempts": 0}}
+    _sessions = {}   # {session_id: {"email": "...", "created_at": datetime}}
     
     def __init__(self):
         self.stripe_secret_key = os.environ.get("STRIPE_SECRET_KEY", "")
         self.stripe_price_id = os.environ.get("STRIPE_PRICE_ID", "")
         self.payment_link = os.environ.get("STRIPE_PAYMENT_LINK", "")
         self._current_license = None
+        self._current_session_id = None
         self._demo_mode = not self.stripe_secret_key
         
         if self.stripe_secret_key:
             stripe.api_key = self.stripe_secret_key
+    
+    def generate_otp(self, email):
+        """Gera um código OTP de 6 dígitos para o email"""
+        email = email.strip().lower()
+        code = ''.join(random.choices(string.digits, k=6))
+        
+        self._otp_codes[email] = {
+            "code": code,
+            "created_at": datetime.now(),
+            "attempts": 0
+        }
+        
+        return code
+    
+    def verify_otp(self, email, code):
+        """Verifica se o código OTP é válido (válido por 10 minutos, máx 3 tentativas)"""
+        email = email.strip().lower()
+        
+        if email not in self._otp_codes:
+            return False, "❌ Código expirado. Solicite um novo código."
+        
+        otp_data = self._otp_codes[email]
+        
+        # Verificar tentativas
+        if otp_data["attempts"] >= 3:
+            del self._otp_codes[email]
+            return False, "❌ Muitas tentativas. Solicite um novo código."
+        
+        # Verificar expiração (10 minutos)
+        if (datetime.now() - otp_data["created_at"]).seconds > 600:
+            del self._otp_codes[email]
+            return False, "❌ Código expirado. Solicite um novo código."
+        
+        # Verificar código
+        if otp_data["code"] != code:
+            otp_data["attempts"] += 1
+            return False, f"❌ Código incorreto. ({3 - otp_data['attempts']} tentativas restantes)"
+        
+        # Código válido - remover OTP
+        del self._otp_codes[email]
+        return True, "✅ Código verificado!"
+    
+    def create_session(self, email):
+        """Cria uma sessão para o usuário (válida por 30 dias)"""
+        email = email.strip().lower()
+        session_id = ''.join(random.choices(string.ascii_letters + string.digits, k=32))
+        
+        self._sessions[session_id] = {
+            "email": email,
+            "created_at": datetime.now()
+        }
+        
+        return session_id
+    
+    def verify_session(self, session_id):
+        """Verifica se a sessão é válida (válida por 30 dias)"""
+        if session_id not in self._sessions:
+            return None
+        
+        session = self._sessions[session_id]
+        
+        # Verificar expiração (30 dias)
+        if (datetime.now() - session["created_at"]).days > 30:
+            del self._sessions[session_id]
+            return None
+        
+        return session["email"]
+    
+    def logout(self, session_id):
+        """Faz logout removendo a sessão"""
+        if session_id in self._sessions:
+            del self._sessions[session_id]
+            return True
+        return False
     
     def validate_by_email(self, email):
         """Valida se o email tem uma assinatura ativa no Stripe"""
@@ -115,28 +194,77 @@ class LicenseManager:
         except Exception as e:
             return {"valid": False, "error": f"Erro ao verificar licença: {str(e)}"}
     
-    def activate_license(self, license_key, email):
-        """Ativa licença verificando assinatura no Stripe pelo email"""
+    def request_otp(self, email):
+        """Solicita OTP para o email (simula envio por email)"""
         if not email or len(email) < 5 or "@" not in email:
             return False, "❌ Por favor, insira um email válido."
         
-        result = self.validate_by_email(email.strip().lower())
+        email = email.strip().lower()
         
+        # Verificar se o email tem assinatura ativa no Stripe
+        result = self.validate_by_email(email)
+        if not result.get("valid"):
+            return False, f"❌ {result.get('error', 'Email não encontrado')}"
+        
+        # Gerar OTP
+        otp_code = self.generate_otp(email)
+        
+        # Em produção, aqui você enviaria o OTP por email via SendGrid/Stripe
+        # Por enquanto, vamos simular (em modo demo, mostramos o código)
+        if self._demo_mode:
+            return True, f"✅ Código OTP gerado: **{otp_code}** (válido por 10 minutos)\n\n*Modo demo: código exibido acima*"
+        else:
+            # Em produção, o código seria enviado por email
+            return True, f"✅ Código enviado para {email}\n\nVerifique seu email e insira o código de 6 dígitos."
+    
+    def verify_otp_and_login(self, email, otp_code):
+        """Verifica OTP e cria sessão se válido"""
+        email = email.strip().lower()
+        
+        # Verificar OTP
+        valid, message = self.verify_otp(email, otp_code)
+        if not valid:
+            return False, message, None
+        
+        # Validar assinatura no Stripe
+        result = self.validate_by_email(email)
+        if not result.get("valid"):
+            return False, f"❌ {result.get('error', 'Email não encontrado')}", None
+        
+        # Criar sessão
+        session_id = self.create_session(email)
+        self._current_license = result
+        self._current_session_id = session_id
+        
+        return True, "✅ Login realizado com sucesso!", session_id
+    
+    def login_with_session(self, session_id):
+        """Faz login usando session_id (para persistência)"""
+        email = self.verify_session(session_id)
+        if not email:
+            return False, None
+        
+        # Validar assinatura no Stripe
+        result = self.validate_by_email(email)
         if result.get("valid"):
             self._current_license = result
-            return True, "✅ Licença ativada com sucesso!"
-        else:
-            error = result.get("error", "Email não encontrado")
-            return False, f"❌ {error}"
+            self._current_session_id = session_id
+            return True, email
+        
+        return False, None
+    
+    def logout_user(self):
+        """Faz logout do usuário"""
+        if self._current_session_id:
+            LicenseManager._sessions.pop(self._current_session_id, None)
+        self._current_license = None
+        self._current_session_id = None
+        return True
     
     def is_licensed(self):
         """Verifica se há licença ativa na sessão"""
         if self._current_license and self._current_license.get("valid"):
             return True
-        for email, data in LicenseManager._validated_licenses.items():
-            if data.get("valid"):
-                self._current_license = data
-                return True
         return False
     
     def get_license_info(self):
@@ -149,6 +277,10 @@ class LicenseManager:
                 "status": self._current_license.get("status", "active")
             }
         return None
+    
+    def get_session_id(self):
+        """Retorna o ID da sessão atual"""
+        return self._current_session_id
 
 # Configurações globais
 BASE_PATH = os.path.dirname(os.path.abspath(__file__))
@@ -941,19 +1073,30 @@ def check_license_status():
     else:
         return "❌ **LICENÇA NÃO ATIVADA**\\n\\nPor favor, ative sua licença para usar todas as funcionalidades."
 
-def activate_license_action(email):
-    """Ativa licença verificando assinatura no Stripe pelo email"""
-    if not email or "@" not in email:
-        return "❌ Por favor, insira um email válido.", gr.update(visible=True), gr.update(visible=False)
+def request_otp_action(email):
+    """Solicita OTP para o email"""
+    success, message = license_manager.request_otp(email)
     
-    success, message = license_manager.activate_license("", email)
+    if success:
+        return message, gr.update(visible=False), gr.update(visible=True)
+    else:
+        return message, gr.update(visible=True), gr.update(visible=False)
+
+def verify_otp_action(email, otp_code):
+    """Verifica OTP e faz login"""
+    success, message, session_id = license_manager.verify_otp_and_login(email, otp_code)
     
     if success:
         info = license_manager.get_license_info()
-        success_msg = f"✅ {message}\n\n🎉 **Acesso liberado!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
-        return success_msg, gr.update(visible=False), gr.update(visible=True)
+        success_msg = f"✅ {message}\n\n🎉 **Bem-vindo!**\n\n📧 Email: {info['email']}\n🎯 Plano: {info['plan'].upper()}"
+        return success_msg, session_id, gr.update(visible=False), gr.update(visible=True)
     else:
-        return f"{message}", gr.update(visible=True), gr.update(visible=False)
+        return message, "", gr.update(visible=True), gr.update(visible=False)
+
+def logout_action():
+    """Faz logout do usuário"""
+    license_manager.logout_user()
+    return gr.update(visible=True), gr.update(visible=False)
 
 # Interface Gradio Comercial
 def create_commercial_interface():
@@ -1004,22 +1147,45 @@ def create_commercial_interface():
                     """)
                 
                 with gr.Column(scale=1):
-                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Já assinou? Ative seu acesso:</h3>")
+                    gr.HTML("<h3 style='color: #495057; margin: 0 0 15px 0;'>🔐 Já assinou? Faça login:</h3>")
                     
-                    with gr.Group():
+                    # ETAPA 1: Solicitar Email
+                    with gr.Group(visible=True) as email_step:
                         email_input = gr.Textbox(
-                            label="� Email usado na compra",
+                            label="📧 Email usado na compra",
                             placeholder="seu@email.com",
                             info="Use o mesmo email que você usou no checkout do Stripe"
                         )
                         
-                        activate_btn = gr.Button(
-                            "🚀 Ativar Acesso",
+                        request_otp_btn = gr.Button(
+                            "📨 Enviar Código",
                             variant="primary",
                             size="lg"
                         )
                         
-                        activation_result = gr.Markdown(
+                        email_result = gr.Markdown(
+                            label="Resultado",
+                            visible=True
+                        )
+                    
+                    # ETAPA 2: Verificar OTP
+                    with gr.Group(visible=False) as otp_step:
+                        otp_input = gr.Textbox(
+                            label="� Código de 6 dígitos",
+                            placeholder="123456",
+                            info="Verifique seu email e insira o código",
+                            max_lines=1
+                        )
+                        
+                        verify_otp_btn = gr.Button(
+                            "✅ Verificar e Entrar",
+                            variant="primary",
+                            size="lg"
+                        )
+                        
+                        session_id_hidden = gr.Textbox(visible=False)
+                        
+                        otp_result = gr.Markdown(
                             label="Resultado",
                             visible=True
                         )
@@ -1047,16 +1213,25 @@ def create_commercial_interface():
             # Mostrar info da licença (se licenciado)
             if is_licensed:
                 license_info = license_manager.get_license_info()
-                gr.HTML(f"""
-                <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
-                    <h3 style="color: #155724; margin: 0 0 10px 0;">✅ Licença Ativada</h3>
-                    <p style="color: #155724; margin: 0;">
-                        <strong>Email:</strong> {license_info['email']} | 
-                        <strong>Plano:</strong> {license_info['plan'].upper()} | 
-                        <strong>Ativada em:</strong> {license_info['activated_at'][:10]}
-                    </p>
-                </div>
-                """)
+                with gr.Row():
+                    with gr.Column(scale=9):
+                        gr.HTML(f"""
+                        <div style="background: #d4edda; border: 1px solid #c3e6cb; border-radius: 8px; padding: 15px; margin-bottom: 20px;">
+                            <h3 style="color: #155724; margin: 0 0 10px 0;">✅ Licença Ativada</h3>
+                            <p style="color: #155724; margin: 0;">
+                                <strong>Email:</strong> {license_info['email']} | 
+                                <strong>Plano:</strong> {license_info['plan'].upper()} | 
+                                <strong>Ativada em:</strong> {license_info['activated_at'][:10]}
+                            </p>
+                        </div>
+                        """)
+                    with gr.Column(scale=1):
+                        logout_btn = gr.Button(
+                            "🚪 Sair",
+                            variant="stop",
+                            size="sm",
+                            scale=1
+                        )
             
             with gr.Tabs():
                 # Tab de Processamento Individual
@@ -1189,12 +1364,27 @@ def create_commercial_interface():
             </div>
             """)
         
-        # Eventos de ativação - atualiza visibilidade dos grupos
-        activate_btn.click(
-            fn=activate_license_action,
+        # Eventos de autenticação - novo fluxo com OTP
+        # ETAPA 1: Solicitar OTP
+        request_otp_btn.click(
+            fn=request_otp_action,
             inputs=[email_input],
-            outputs=[activation_result, activation_group, app_group]
+            outputs=[email_result, email_step, otp_step]
         )
+        
+        # ETAPA 2: Verificar OTP e fazer login
+        verify_otp_btn.click(
+            fn=verify_otp_action,
+            inputs=[email_input, otp_input],
+            outputs=[otp_result, session_id_hidden, activation_group, app_group]
+        )
+        
+        # Evento de logout (se licenciado)
+        if is_licensed:
+            logout_btn.click(
+                fn=logout_action,
+                outputs=[activation_group, app_group]
+            )
         
         # Funções auxiliares para interface
         def update_batch_info(files):
