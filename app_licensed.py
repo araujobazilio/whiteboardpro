@@ -328,23 +328,57 @@ def preprocess_hand_image(hand_path, hand_mask_path):
     
     return hand, hand_mask, hand_mask_inv, hand_ht, hand_wd
 
-def draw_hand_on_img(drawing, hand, x, y, hand_mask_inv, hand_ht, hand_wd, img_ht, img_wd):
-    """Desenha a mão na posição especificada"""
-    remaining_ht = img_ht - y
-    remaining_wd = img_wd - x
+def draw_hand_on_img(drawing, hand, x, y, hand_mask_inv, hand_ht, hand_wd, img_ht, img_wd, offset_x=0, offset_y=0):
+    """
+    Desenha a mão na posição especificada.
+    offset_x, offset_y: Ajuste para que a (x,y) seja a ponta da caneta, não o canto da imagem da mão.
+    """
+    # Ajustar posição baseada no offset da ponta da caneta
+    draw_x = x - offset_x
+    draw_y = y - offset_y
     
-    crop_hand_ht = min(hand_ht, remaining_ht)
-    crop_hand_wd = min(hand_wd, remaining_wd)
+    # Garantir que não desenhe fora da imagem (clipping básico)
+    if draw_x >= img_wd or draw_y >= img_ht:
+        return drawing
+        
+    # Calcular coordenadas de corte
+    # Início na imagem
+    start_x = max(0, draw_x)
+    start_y = max(0, draw_y)
     
-    hand_cropped = hand[:crop_hand_ht, :crop_hand_wd]
-    hand_mask_inv_cropped = hand_mask_inv[:crop_hand_ht, :crop_hand_wd]
+    # Se a mão começou antes da imagem (negativo), precisamos cortar o início da mão
+    crop_hand_start_x = max(0, -draw_x)
+    crop_hand_start_y = max(0, -draw_y)
     
-    for c in range(3):
-        drawing[y:y+crop_hand_ht, x:x+crop_hand_wd, c] = (
-            drawing[y:y+crop_hand_ht, x:x+crop_hand_wd, c] * hand_mask_inv_cropped
-        )
+    remaining_ht = img_ht - start_y
+    remaining_wd = img_wd - start_x
     
-    drawing[y:y+crop_hand_ht, x:x+crop_hand_wd] += hand_cropped
+    # Quanto da mão cabe na imagem a partir do ponto de desenho
+    # A altura efetiva da mão é (hand_ht - crop_hand_start_y)
+    # A largura efetiva da mão é (hand_wd - crop_hand_start_x)
+    
+    effective_hand_ht = min(hand_ht - crop_hand_start_y, remaining_ht)
+    effective_hand_wd = min(hand_wd - crop_hand_start_x, remaining_wd)
+    
+    if effective_hand_ht <= 0 or effective_hand_wd <= 0:
+        return drawing
+    
+    # Fatias da mão
+    hand_cropped = hand[crop_hand_start_y:crop_hand_start_y+effective_hand_ht, crop_hand_start_x:crop_hand_start_x+effective_hand_wd]
+    hand_mask_inv_cropped = hand_mask_inv[crop_hand_start_y:crop_hand_start_y+effective_hand_ht, crop_hand_start_x:crop_hand_start_x+effective_hand_wd]
+    
+    # Fatias da imagem (Region of Interest)
+    roi = drawing[start_y:start_y+effective_hand_ht, start_x:start_x+effective_hand_wd]
+    
+    # Composição (Alpha Blending Fake com máscara binária)
+    # ROI * mascara (apaga onde a mão vai entrar) + Mão
+    
+    # Otimização: Fazer multiplicação em broadcast
+    roi_bg = cv2.bitwise_and(roi, roi, mask=hand_mask_inv_cropped)
+    roi_final = cv2.add(roi_bg, hand_cropped)
+    
+    drawing[start_y:start_y+effective_hand_ht, start_x:start_x+effective_hand_wd] = roi_final
+
     return drawing
 
 def common_divisors(num1, num2):
@@ -657,52 +691,110 @@ def generate_sketch_video(
             if i % 100 == 0:
                 progress(0.2 + 0.5 * (i / total_steps), desc=f"✏️ Desenhando... {int(i/total_steps*100)}%")
         
-        # === FASE 2: COLORIZAÇÃO (se selecionado, manter lógica simplificada mas com interpolação) ===
         if draw_mode == "Contornos + Colorização":
-             # ... manter lógica similar mas adicionar interpolação se necessário ...
-             # Para simplificar e não estourar o limite de linhas, usaremos uma versão enxuta da colorização
-             # que reutiliza a queue se possível, mas colorização é baseada em regiões
-             pass 
-             # (Nota: A lógica de colorização original já era baseada em componentes, vamos mantê-la simples
-             # ou idealmente refatorar também, mas o foco principal era o traço preto)
+             progress(0.7, desc="🎨 Colorindo (Modo Otimizado)...")
              
-             progress(0.7, desc="🎨 Colorindo...")
-             # Reimplemtando colorização simplificada
+             # Inverter limiar para pegar regiões (assumindo que o que não é preto é região pintável/branca)
+             # Na verdade, queremos pintar o que é colorido na imagem original.
+             # Se img_thresh é PB, as regiões pretas são contornos. O resto é fundo.
+             # Para colorir, queremos pegar regiões fechadas e preencher.
+             
+             # Lógica: Usar a imagem original para guiar a colorização, mas dividir em regiões para a mão pintar
+             # Vamos detectar regiões de cor homogênea ou simplesmente regiões espaciais.
+             # Para simplificar: Criar um grid/regiões baseado nos contornos.
+             
              img_thresh_inv = cv2.bitwise_not(img_thresh)
              kernel = np.ones((3, 3), np.uint8)
              img_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
-             img_regions = cv2.bitwise_not(img_dilated)
+             img_regions = cv2.bitwise_not(img_dilated) # Regiões brancas (fundo/cor) separadas pelos contornos pretos
              num_labels, labels = cv2.connectedComponents(img_regions)
 
              # Coletar regiões válidas
-             regions = []
+             regions_info = []
              for l in range(1, num_labels):
-                 mask = (labels == l)
-                 if np.sum(mask) > 50: # Ignorar ruido
-                    regions.append({'label': l, 'size': np.sum(mask)})
-             regions.sort(key=lambda x: x['size']) # Menores primeiro
+                 mask_indices = np.where(labels == l)
+                 ys, xs = mask_indices
+                 
+                 # Ignorar regiões muito pequenas (ruído)
+                 if len(ys) > 100:
+                     regions_info.append({
+                         'label': l,
+                         'size': len(ys),
+                         'ys': ys,
+                         'xs': xs
+                     })
              
-             for idx, reg in enumerate(regions):
-                 mask = (labels == reg['label'])
-                 ys, xs = np.where(mask)
+             # Ordenar regiões para pintar (maiores primeiro ou por posição?)
+             # Por posição (topo-esquerda) fica mais natural
+             regions_info.sort(key=lambda r: np.min(r['ys']) + np.min(r['xs']) * 0.1)
+             
+             # Configuração da Caneta (Offset da ponta) e Pincelada
+             # Assumindo que a imagem da mão tem a ponta da caneta em algum lugar específico.
+             # Se a mão é padrão (segurando caneta), a ponta geralmente está um pouco abaixo e à esquerda do centro ou topo-esquerda.
+             # Ajuste empírico: Vamos assumir que a ponta está em (0, 0) da imagem da mão se não tivermos info, 
+             # mas o usuário pediu offset. Vamos estimar:
+             # Se a imagem da mão tem 200x200, centro é 100,100. Ponta pode ser em 20, 180?
+             # Vamos usar um valor conservador e parametrizável.
+             PEN_OFFSET_X = int(hand_wd * 0.15) # Ex: ponta um pouco à esquerda
+             PEN_OFFSET_Y = int(hand_ht * 0.9)  # Ex: ponta bem embaixo
+             
+             # Batch de pixels para frame (reduzir frames)
+             PIXELS_PER_FRAME = 2000 # Pintar 2000 pixels antes de gerar 1 frame (ajustar conforme resolução)
+             pixels_since_last_frame = 0
+             
+             for reg in regions_info:
+                 ys = reg['ys']
+                 xs = reg['xs']
                  
-                 # Pintar tudo de uma vez no canvas base
-                 drawn_frame[ys, xs] = img[ys, xs]
+                 # === LÓGICA SCANLINE / ZIG-ZAG ===
+                 # Ordenar pixels pela coordenada Y, depois X (Scanline clássico)
+                 # Para fazer Zig-Zag (uma linha vai, outra volta), é mais complexo com numpy puro.
+                 # Vamos fazer Scanline simples (Cima -> Baixo, Esquerda -> Direita) que já é muito melhor que blocos.
+                 # lexsort ordena pelo último argumento primeiro (primário), depois o penúltimo...
+                 # Queremos ordenar por Y (linhas) e depois por X (colunas)
+                 sort_indices = np.lexsort((xs, ys))
+                 sorted_ys = ys[sort_indices]
+                 sorted_xs = xs[sort_indices]
                  
-                 # Mover mão para o centro da região
-                 cy, cx = int(np.mean(ys)), int(np.mean(xs))
+                 # Processar em lotes para performance
+                 num_pixels = len(sorted_ys)
                  
-                 # Interpolação até lá
+                 # Mover a mão para o início da região (interpolação)
+                 start_y, start_x = sorted_ys[0], sorted_xs[0]
                  if last_hand_pos:
-                     dist = np.sqrt((cy - last_hand_pos[0])**2 + (cx - last_hand_pos[1])**2)
+                     dist = np.sqrt((start_y - last_hand_pos[0])**2 + (start_x - last_hand_pos[1])**2)
                      if dist > split_len * 2:
-                         interp_points = interpolate_points(last_hand_pos, (cy, cx), 5)
+                         interp_points = interpolate_points(last_hand_pos, (start_y, start_x), 10)
                          for ty, tx in interp_points:
-                             video_object.write(draw_hand_on_img(drawn_frame.copy(), hand, tx, ty, hand_mask_inv, hand_ht, hand_wd, target_ht, target_wd))
+                             frame = draw_hand_on_img(drawn_frame.copy(), hand, tx, ty, 
+                                                    hand_mask_inv, hand_ht, hand_wd, target_ht, target_wd,
+                                                    offset_x=PEN_OFFSET_X, offset_y=PEN_OFFSET_Y)
+                             video_object.write(frame)
                  
-                 # Frame final pintado
-                 video_object.write(draw_hand_on_img(drawn_frame.copy(), hand, cx, cy, hand_mask_inv, hand_ht, hand_wd, target_ht, target_wd))
-                 last_hand_pos = (cy, cx)
+                 # Pintura
+                 batch_size = PIXELS_PER_FRAME
+                 for i in range(0, num_pixels, batch_size):
+                     end_i = min(i + batch_size, num_pixels)
+                     
+                     # Pinta o lote de pixels de uma vez na imagem base
+                     # Isso é CRUCIAL: Modificar 'drawn_frame' diretamente
+                     current_ys = sorted_ys[i:end_i]
+                     current_xs = sorted_xs[i:end_i]
+                     drawn_frame[current_ys, current_xs] = img[current_ys, current_xs]
+                     
+                     # Coordenada da mão no fim desse lote
+                     current_y, current_x = current_ys[-1], current_xs[-1]
+                     
+                     # Gerar frame de vídeo com a mão nessa posição
+                     # Só gravar frame
+                     frame = draw_hand_on_img(drawn_frame.copy(), hand, current_x, current_y, 
+                                            hand_mask_inv, hand_ht, hand_wd, target_ht, target_wd,
+                                            offset_x=PEN_OFFSET_X, offset_y=PEN_OFFSET_Y)
+                     video_object.write(frame)
+                     
+                     last_hand_pos = (current_y, current_x)
+                     
+                 # Fim da região
 
         # Adicionar imagem final
         progress(0.9, desc="🖼️ Finalizando...")
@@ -729,10 +821,10 @@ def generate_sketch_video(
             output_stream.height = input_stream.codec_context.height
             output_stream.pix_fmt = 'yuv420p'
             
-            # CONFIGURAÇÕES CRÍTICAS PARA TAMANHO E PERFORMANCE
+            # CONFIGURAÇÕES CRÍTICAS PARA TAMANHO E PERFORMANCE (OTIMIZADO)
             output_stream.options = {
-                'crf': '28',          # Maior compressão (antes era 20)
-                'preset': 'veryfast', # Codificação mais rápida
+                'crf': '30',          # Compressão Agressiva (era 28)
+                'preset': 'ultrafast', # Codificação ultra rápida
                 'profile': 'main'
             }
             
@@ -1138,7 +1230,7 @@ def generate_sketch_video_single(
             out_stream.width = in_stream.codec_context.width
             out_stream.height = in_stream.codec_context.height
             out_stream.pix_fmt = "yuv420p"
-            out_stream.options = {"crf": "28", "preset": "veryfast", "profile": "main"}
+            out_stream.options = {"crf": "30", "preset": "ultrafast", "profile": "main"}
             
             for frame in input_container.decode(video=0):
                 packet = out_stream.encode(frame)
