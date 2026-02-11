@@ -368,100 +368,6 @@ def common_divisors(num1, num2):
     common_divs.sort()
     return common_divs
 
-def ease_in_out_quad(t):
-    """Curva de easing natural: início lento, pico rápido, parada suave."""
-    t = max(0.0, min(1.0, t))
-    return t * t * (3.0 - 2.0 * t)
-
-def resize_smart(img, max_w=1920, max_h=1080):
-    """Resize mantendo proporção, limitando ao máximo especificado"""
-    h, w = img.shape[:2]
-
-    if w <= max_w and h <= max_h:
-        return img
-
-    aspect_ratio = w / h
-
-    if w / max_w > h / max_h:
-        new_w = max_w
-        new_h = int(max_w / aspect_ratio)
-    else:
-        new_h = max_h
-        new_w = int(max_h * aspect_ratio)
-
-    return cv2.resize(img, (new_w, new_h))
-
-def get_neighbors(pixel, all_pixels, max_dist=5):
-    """Encontra pixels vizinhos dentro da distância máxima"""
-    x, y = pixel
-    neighbors = []
-
-    for px, py in all_pixels:
-        if (px, py) == (x, y):
-            continue
-
-        dist = ((x - px) ** 2 + (y - py) ** 2) ** 0.5
-        if 2 <= dist <= max_dist:
-            neighbors.append((px, py))
-
-    return neighbors
-
-def order_stroke_pixels(pixels):
-    """Ordena pixels de um stroke para criar um caminho contínuo"""
-    if len(pixels) <= 2:
-        return pixels
-
-    ordered = [pixels[0]]
-    remaining = pixels[1:]
-
-    while remaining:
-        current = ordered[-1]
-        min_dist = float('inf')
-        closest_idx = 0
-
-        for i, pixel in enumerate(remaining):
-            dist = ((current[0] - pixel[0]) ** 2 + (current[1] - pixel[1]) ** 2) ** 0.5
-            if dist < min_dist:
-                min_dist = dist
-                closest_idx = i
-
-        ordered.append(remaining.pop(closest_idx))
-
-    return ordered
-
-def group_into_strokes(pixels, max_distance=5):
-    """Agrupa pixels em strokes conectados usando DFS."""
-    if not pixels:
-        return []
-
-    strokes = []
-    visited = set()
-    pixel_list = [(int(px), int(py)) for px, py in pixels]
-
-    for pixel in pixel_list:
-        if pixel in visited:
-            continue
-
-        stroke = [pixel]
-        visited.add(pixel)
-        stack = [pixel]
-
-        while stack:
-            current = stack.pop()
-            neighbors = get_neighbors(current, pixel_list, max_distance)
-
-            for neighbor in neighbors:
-                if neighbor not in visited:
-                    stroke.append(neighbor)
-                    visited.add(neighbor)
-                    stack.append(neighbor)
-
-        if len(stroke) > 3:
-            stroke = order_stroke_pixels(stroke)
-            strokes.append(stroke)
-
-    return strokes
-
 def generate_sketch_video(
     image_path,
     split_len,
@@ -472,179 +378,298 @@ def generate_sketch_video(
     progress=gr.Progress()
 ):
     """
-    Gera vídeo de sketch animation (Human Speedpaint)
-
+    Gera vídeo de sketch animation
+    
     Args:
         image_path: Caminho da imagem
-        split_len: Tamanho da divisão (mantido por compatibilidade)
+        split_len: Tamanho da divisão em grid
         frame_rate: FPS do vídeo
-        skip_rate: Taxa de pulo (mantido por compatibilidade)
+        skip_rate: Taxa de pulo (velocidade)
         end_duration: Duração da imagem final
         draw_mode: Modo de desenho - 'Apenas Contornos' ou 'Contornos + Colorização'
         progress: Objeto de progresso
     """
     try:
         start_time = time.time()
-
-        progress(0, desc="🧠 Analisando estrutura da imagem...")
-
-        # 1. Carregar e pré-processar imagem
+        
+        progress(0, desc="📸 Carregando imagem...")
+        
+        # Carregar imagem
         img = cv2.imread(image_path)
         if img is None:
             return None, "❌ Erro ao carregar imagem"
-
-        img = resize_smart(img, max_w=1920, max_h=1080)
-        img_ht, img_wd = img.shape[:2]
-        img_ht = img_ht if img_ht % 2 == 0 else img_ht - 1
-        img_wd = img_wd if img_wd % 2 == 0 else img_wd - 1
-        img = cv2.resize(img, (img_wd, img_ht))
-
-        progress(0.05, desc=f"🔧 Imagem redimensionada para {img_wd}x{img_ht}")
-
+        
+        img_ht, img_wd = img.shape[0], img.shape[1]
+        
+        # Ajustar resolução (limitar a 1920x1080 máximo para balancear qualidade e performance)
+        aspect_ratio = img_wd / img_ht
+        
+        # Limitar a 1080p para qualidade HD excelente
+        MAX_HEIGHT = 1080
+        MAX_WIDTH = 1920
+        
+        if img_ht > MAX_HEIGHT or img_wd > MAX_WIDTH:
+            # Calcular nova dimensão mantendo aspecto
+            if img_wd / MAX_WIDTH > img_ht / MAX_HEIGHT:
+                # Largura é o fator limitante
+                target_wd = MAX_WIDTH
+                target_ht = int(target_wd / aspect_ratio)
+            else:
+                # Altura é o fator limitante
+                target_ht = MAX_HEIGHT
+                target_wd = int(target_ht * aspect_ratio)
+        else:
+            target_ht = img_ht
+            target_wd = img_wd
+        
+        # GARANTIR que dimensões sejam divisíveis pelo split_len
+        # Isso evita o erro "array split does not result in an equal division"
+        target_wd = (target_wd // split_len) * split_len
+        target_ht = (target_ht // split_len) * split_len
+        
+        # Garantir dimensões mínimas (evitar 0 ou negativo)
+        min_dim = split_len * 2
+        target_wd = max(target_wd, min_dim)
+        target_ht = max(target_ht, min_dim)
+        
+        # Ajustar para valores pares (necessário para codecs)
+        target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
+        target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
+        
+        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht} (Full HD)...")
+        img = cv2.resize(img, (target_wd, target_ht))
+        
+        # Processar imagem
+        progress(0.1, desc="🎨 Processando imagem...")
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         img_thresh = cv2.adaptiveThreshold(
             img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
         )
-        edges = cv2.Canny(img_gray, 50, 150)
-
+        
         # Carregar mão
-        progress(0.1, desc="✋ Carregando imagem da mão...")
+        progress(0.15, desc="✋ Carregando imagem da mão...")
         hand, hand_mask, hand_mask_inv, hand_ht, hand_wd = preprocess_hand_image(
             HAND_PATH, HAND_MASK_PATH
         )
-
-        # 2. Connected Components -> objetos individuais
-        progress(0.15, desc="🎯 Identificando objetos individuais...")
-        num_labels, labels = cv2.connectedComponents(edges)
-
-        object_list = []
-        for label_id in range(1, num_labels):
-            component_mask = (labels == label_id)
-            size = int(np.sum(component_mask))
-            if size > 50:
-                ys, xs = np.where(component_mask)
-                center = (int(np.mean(xs)), int(np.mean(ys)))
-                object_list.append({
-                    'id': label_id,
-                    'mask': component_mask,
-                    'center': center,
-                    'size': size,
-                    'pixels': list(zip(xs, ys))
-                })
-
-        object_list.sort(key=lambda obj: obj['size'] * (1 + obj['center'][1] / img_ht), reverse=True)
-        total_objects = len(object_list)
-
-        progress(0.2, desc=f"✏️ Ordenando {total_objects} objetos...")
-
-        # 3. Preparar vídeo
+        
+        # Criar nome do vídeo
         now = datetime.now()
-        video_name = f"human_sketch_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
+        video_name = f"sketch_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
         video_path = os.path.join(SAVE_PATH, video_name)
+        
+        # Criar objeto de vídeo
+        progress(0.2, desc="🎬 Criando vídeo...")
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (img_wd, img_ht))
-
+        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (target_wd, target_ht))
+        
         # Canvas branco
-        canvas = np.ones((img_ht, img_wd, 3), dtype=np.uint8) * 255
-
-        # 4. Animação principal com easing
-        progress(0.3, desc=f"🎨 Desenhando {total_objects} objetos...")
-
-        for obj_idx, obj in enumerate(object_list):
-            if total_objects > 0:
-                prog_percent = 0.3 + (0.5 * obj_idx / total_objects)
-                progress(prog_percent, desc=f"🎨 Desenhando objeto {obj_idx + 1}/{total_objects}")
-
-            obj_pixels = obj['pixels']
-            strokes = group_into_strokes(obj_pixels, max_distance=5)
-
-            for stroke in strokes:
-                stroke_len = len(stroke)
-                if stroke_len < 3:
-                    continue
-
-                frames_for_stroke = max(5, stroke_len // 10)
-
-                for frame_in_stroke in range(frames_for_stroke):
-                    t = frame_in_stroke / frames_for_stroke
-                    eased_t = ease_in_out_quad(t)
-                    drawn_up_to = int(stroke_len * eased_t)
-
-                    stroke_canvas = canvas.copy()
-                    for i in range(drawn_up_to):
-                        x, y = stroke[i]
-                        cv2.circle(stroke_canvas, (x, y), 1, (0, 0, 0), -1)
-
-                    if drawn_up_to > 0:
-                        current_pos = stroke[min(drawn_up_to - 1, stroke_len - 1)]
-                        stroke_canvas = draw_hand_on_img(
-                            stroke_canvas, hand.copy(), current_pos[0], current_pos[1],
-                            hand_mask_inv.copy(), hand_ht, hand_wd, img_ht, img_wd
-                        )
-
-                    video_object.write(stroke_canvas)
-
-                for x, y in stroke:
-                    cv2.circle(canvas, (x, y), 1, (0, 0, 0), -1)
-
-            for _ in range(3):
-                video_object.write(canvas)
-
-        # 5. Imagem final colorida
+        drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
+        
+        # Dividir em grids
+        progress(0.25, desc="📐 Dividindo imagem em grids...")
+        n_cuts_vertical = int(math.ceil(target_ht / split_len))
+        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        
+        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
+        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
+        
+        # Encontrar grids com pixels pretos
+        cut_having_black = (grid_of_cuts < 10) * 1
+        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
+        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
+        
+        total_cuts = len(cut_black_indices)
+        selected_ind = 0
+        counter = 0
+        
+        progress(0.3, desc=f"✏️ Desenhando ({total_cuts} grids)...")
+        
+        # Desenhar
+        while len(cut_black_indices) > 1:
+            selected_ind_val = cut_black_indices[selected_ind].copy()
+            range_v_start = selected_ind_val[0] * split_len
+            range_v_end = range_v_start + split_len
+            range_h_start = selected_ind_val[1] * split_len
+            range_h_end = range_h_start + split_len
+            
+            temp_drawing = np.zeros((split_len, split_len, 3))
+            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            
+            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
+            
+            hand_coord_x = range_h_start + int(split_len / 2)
+            hand_coord_y = range_v_start + int(split_len / 2)
+            
+            drawn_frame_with_hand = draw_hand_on_img(
+                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
+                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+            )
+            
+            cut_black_indices[selected_ind] = cut_black_indices[-1]
+            cut_black_indices = cut_black_indices[:-1]
+            
+            del selected_ind
+            
+            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
+            selected_ind = np.argmin(euc_arr)
+            
+            counter += 1
+            if counter % skip_rate == 0:
+                video_object.write(drawn_frame_with_hand)
+            
+            if counter % 100 == 0:
+                prog_percent = 0.3 + (0.6 * (1 - len(cut_black_indices) / total_cuts))
+                progress(prog_percent, desc=f"✏️ Desenhando... {100 * (1 - len(cut_black_indices) / total_cuts):.1f}%")
+        
+        # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
         if draw_mode == "Contornos + Colorização":
-            progress(0.8, desc="🎨 Adicionando cores finais...")
-            for _ in range(frame_rate * 2):
-                video_object.write(img)
-
+            progress(0.7, desc="🎨 Detectando regiões para colorir...")
+            
+            # Inverter threshold para encontrar regiões fechadas
+            img_thresh_inv = cv2.bitwise_not(img_thresh)
+            kernel = np.ones((3, 3), np.uint8)
+            img_thresh_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
+            img_thresh_for_regions = cv2.bitwise_not(img_thresh_dilated)
+            
+            # Encontrar regiões conectadas
+            num_labels, labels = cv2.connectedComponents(img_thresh_for_regions)
+            
+            # Calcular info de cada região
+            region_info = []
+            for label_id in range(1, num_labels):
+                region_mask = (labels == label_id)
+                region_size = np.sum(region_mask)
+                
+                if region_size < 50:
+                    continue
+                
+                ys, xs = np.where(region_mask)
+                if len(ys) == 0:
+                    continue
+                    
+                # Pular regiões brancas/quase brancas
+                mean_color = np.mean(img[ys, xs], axis=0)
+                if np.all(mean_color > 245):
+                    continue
+                
+                cy, cx = int(np.mean(ys)), int(np.mean(xs))
+                
+                region_info.append({
+                    'label_id': label_id,
+                    'size': region_size,
+                    'cx': cx,
+                    'cy': cy,
+                    'ys': ys,
+                    'xs': xs
+                })
+            
+            # Ordenar por tamanho (menores primeiro)
+            region_info.sort(key=lambda r: r['size'])
+            
+            total_regions = len(region_info)
+            color_skip = max(1, skip_rate // 2)
+            block_counter = 0
+            
+            progress(0.72, desc=f"🎨 Colorindo {total_regions} regiões...")
+            
+            # Processar cada região por blocos de grid (meio termo: não pixel a pixel, nem tudo de uma vez)
+            for reg_idx, region in enumerate(region_info):
+                ys, xs = region['ys'], region['xs']
+                
+                # Agrupar pixels em blocos de grid usando NumPy (vetorizado, rápido)
+                grid_rows = ys // split_len
+                grid_cols = xs // split_len
+                grid_keys_arr = grid_rows * 10000 + grid_cols  # chave única por bloco
+                unique_keys = np.unique(grid_keys_arr)
+                
+                # Montar lista de blocos com seus pixels
+                blocks = []
+                for key in unique_keys:
+                    mask = grid_keys_arr == key
+                    blocks.append((ys[mask], xs[mask], int(key // 10000), int(key % 10000)))
+                
+                if len(blocks) == 0:
+                    continue
+                
+                # Ordenar blocos por linha e coluna (rápido e natural)
+                blocks.sort(key=lambda b: (b[2], b[3]))
+                
+                # Pintar bloco por bloco com animação
+                for block_ys, block_xs, gr_row, gr_col in blocks:
+                    # Aplicar cor do bloco inteiro de uma vez (vetorizado)
+                    drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
+                    
+                    block_counter += 1
+                    if block_counter % color_skip == 0:
+                        # Posicionar mão no centro do bloco
+                        hx = min(gr_col * split_len + split_len // 2, target_wd - 1)
+                        hy = min(gr_row * split_len + split_len // 2, target_ht - 1)
+                        
+                        drawn_frame_with_hand = draw_hand_on_img(
+                            drawn_frame.copy(), hand.copy(), hx, hy,
+                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                        )
+                        video_object.write(drawn_frame_with_hand)
+                
+                # Atualizar progresso
+                if reg_idx % 10 == 0 and total_regions > 0:
+                    prog_pct = 0.72 + (0.18 * (reg_idx + 1) / total_regions)
+                    progress(prog_pct, desc=f"🎨 Colorindo... {reg_idx + 1}/{total_regions}")
+        
+        # Adicionar imagem final
         progress(0.9, desc="🖼️ Adicionando imagem final...")
-        for _ in range(frame_rate * end_duration):
-            video_object.write(img)
-
+        drawn_frame[:, :, :] = img
+        
+        for i in range(frame_rate * end_duration):
+            video_object.write(drawn_frame)
+        
         video_object.release()
-
+        
         # Tentar converter para H264
         progress(0.95, desc="🔄 Convertendo para H264...")
         try:
             import av
             h264_path = video_path.replace('.mp4', '_h264.mp4')
-
+            
             input_container = av.open(video_path, mode="r")
             output_container = av.open(h264_path, mode="w")
-
+            
             in_stream = input_container.streams.video[0]
             out_stream = output_container.add_stream("h264", rate=in_stream.average_rate)
             out_stream.width = in_stream.codec_context.width
             out_stream.height = in_stream.codec_context.height
             out_stream.pix_fmt = "yuv420p"
             out_stream.options = {"crf": "20"}
-
+            
             for frame in input_container.decode(video=0):
                 packet = out_stream.encode(frame)
                 if packet:
                     output_container.mux(packet)
-
+            
             packet = out_stream.encode(None)
             if packet:
                 output_container.mux(packet)
-
+            
             output_container.close()
             input_container.close()
-
+            
             os.remove(video_path)
             video_path = h264_path
         except Exception as e:
             print(f"Conversão H264 falhou (usando MP4 original): {e}")
-
+        
         end_time = time.time()
         duration = end_time - start_time
-
+        
         progress(1.0, desc="✅ Concluído!")
-
-        return video_path, f"✅ Vídeo humano gerado em {duration:.1f}s!\n📁 Salvo em: {video_path}"
-
+        
+        return video_path, f"✅ Vídeo gerado com sucesso em {duration:.1f}s!\\n📁 Salvo em: {video_path}"
+        
     except Exception as e:
         import traceback
-        error_msg = f"❌ Erro: {str(e)}\n\n{traceback.format_exc()}"
+        error_msg = f"❌ Erro: {str(e)}\\n\\n{traceback.format_exc()}"
         return None, error_msg
 
 def generate_sketch_video_batch(
@@ -782,130 +807,226 @@ def generate_sketch_video_single(
         img = cv2.imread(image_path)
         if img is None:
             return None, f"Erro ao carregar imagem: {image_path}"
-
-        img = resize_smart(img, max_w=1920, max_h=1080)
-        img_ht, img_wd = img.shape[:2]
-        img_ht = img_ht if img_ht % 2 == 0 else img_ht - 1
-        img_wd = img_wd if img_wd % 2 == 0 else img_wd - 1
-        img = cv2.resize(img, (img_wd, img_ht))
-
+        
+        img_ht, img_wd = img.shape[0], img.shape[1]
+        
+        # Ajustar resolução (limitar a 1920x1080 máximo)
+        aspect_ratio = img_wd / img_ht
+        MAX_HEIGHT = 1080
+        MAX_WIDTH = 1920
+        
+        if img_ht > MAX_HEIGHT or img_wd > MAX_WIDTH:
+            if img_wd / MAX_WIDTH > img_ht / MAX_HEIGHT:
+                target_wd = MAX_WIDTH
+                target_ht = int(target_wd / aspect_ratio)
+            else:
+                target_ht = MAX_HEIGHT
+                target_wd = int(target_ht * aspect_ratio)
+        else:
+            target_ht = img_ht
+            target_wd = img_wd
+        
+        # GARANTIR que dimensões sejam divisíveis pelo split_len
+        target_wd = (target_wd // split_len) * split_len
+        target_ht = (target_ht // split_len) * split_len
+        
+        # Garantir dimensões mínimas
+        min_dim = split_len * 2
+        target_wd = max(target_wd, min_dim)
+        target_ht = max(target_ht, min_dim)
+        
+        # Ajustar para valores pares
+        target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
+        target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
+        
+        img = cv2.resize(img, (target_wd, target_ht))
+        
+        # Processar imagem
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        edges = cv2.Canny(img_gray, 50, 150)
-
+        img_thresh = cv2.adaptiveThreshold(
+            img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
+        )
+        
         # Carregar mão
         hand, hand_mask, hand_mask_inv, hand_ht, hand_wd = preprocess_hand_image(
             HAND_PATH, HAND_MASK_PATH
         )
-
-        # Connected Components -> objetos individuais
-        num_labels, labels = cv2.connectedComponents(edges)
-
-        object_list = []
-        for label_id in range(1, num_labels):
-            component_mask = (labels == label_id)
-            size = int(np.sum(component_mask))
-            if size > 50:
-                ys, xs = np.where(component_mask)
-                center = (int(np.mean(xs)), int(np.mean(ys)))
-                object_list.append({
-                    'id': label_id,
-                    'mask': component_mask,
-                    'center': center,
-                    'size': size,
-                    'pixels': list(zip(xs, ys))
-                })
-
-        object_list.sort(key=lambda obj: obj['size'] * (1 + obj['center'][1] / img_ht), reverse=True)
-
+        
         # Criar nome do vídeo
         base_name = os.path.splitext(os.path.basename(image_path))[0]
-        video_name = f"human_sketch_{base_name}_{int(time.time())}.mp4"
+        video_name = f"sketch_{base_name}_{int(time.time())}.mp4"
         video_path = os.path.join(tempfile.gettempdir(), video_name)
-
+        
         # Criar objeto de vídeo
         fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (img_wd, img_ht))
-
+        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (target_wd, target_ht))
+        
         # Canvas branco
-        canvas = np.ones((img_ht, img_wd, 3), dtype=np.uint8) * 255
-
-        # Animação principal com easing
-        for obj in object_list:
-            strokes = group_into_strokes(obj['pixels'], max_distance=5)
-
-            for stroke in strokes:
-                stroke_len = len(stroke)
-                if stroke_len < 3:
-                    continue
-
-                frames_for_stroke = max(4, stroke_len // 12)
-
-                for frame_in_stroke in range(frames_for_stroke):
-                    t = frame_in_stroke / frames_for_stroke
-                    eased_t = ease_in_out_quad(t)
-                    drawn_up_to = int(stroke_len * eased_t)
-
-                    stroke_canvas = canvas.copy()
-                    for i in range(drawn_up_to):
-                        x, y = stroke[i]
-                        cv2.circle(stroke_canvas, (x, y), 1, (0, 0, 0), -1)
-
-                    if drawn_up_to > 0:
-                        current_pos = stroke[min(drawn_up_to - 1, stroke_len - 1)]
-                        stroke_canvas = draw_hand_on_img(
-                            stroke_canvas, hand.copy(), current_pos[0], current_pos[1],
-                            hand_mask_inv.copy(), hand_ht, hand_wd, img_ht, img_wd
-                        )
-
-                    video_object.write(stroke_canvas)
-
-                for x, y in stroke:
-                    cv2.circle(canvas, (x, y), 1, (0, 0, 0), -1)
-
-            for _ in range(2):
-                video_object.write(canvas)
-
+        drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
+        
+        # Dividir em grids
+        n_cuts_vertical = int(math.ceil(target_ht / split_len))
+        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        
+        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
+        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
+        
+        # Encontrar grids com pixels pretos
+        cut_having_black = (grid_of_cuts < 10) * 1
+        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
+        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
+        
+        total_cuts = len(cut_black_indices)
+        selected_ind = 0
+        counter = 0
+        
+        # Desenhar
+        while len(cut_black_indices) > 1:
+            selected_ind_val = cut_black_indices[selected_ind].copy()
+            range_v_start = selected_ind_val[0] * split_len
+            range_v_end = range_v_start + split_len
+            range_h_start = selected_ind_val[1] * split_len
+            range_h_end = range_h_start + split_len
+            
+            temp_drawing = np.zeros((split_len, split_len, 3))
+            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            
+            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
+            
+            hand_coord_x = range_h_start + int(split_len / 2)
+            hand_coord_y = range_v_start + int(split_len / 2)
+            
+            drawn_frame_with_hand = draw_hand_on_img(
+                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
+                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+            )
+            
+            cut_black_indices[selected_ind] = cut_black_indices[-1]
+            cut_black_indices = cut_black_indices[:-1]
+            
+            del selected_ind
+            
+            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
+            selected_ind = np.argmin(euc_arr)
+            
+            counter += 1
+            if counter % skip_rate == 0:
+                video_object.write(drawn_frame_with_hand)
+        
+        # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
         if draw_mode == "Contornos + Colorização":
-            for _ in range(frame_rate * 2):
-                video_object.write(img)
-
-        for _ in range(frame_rate * end_duration):
-            video_object.write(img)
-
+            img_thresh_inv = cv2.bitwise_not(img_thresh)
+            kernel = np.ones((3, 3), np.uint8)
+            img_thresh_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
+            img_thresh_for_regions = cv2.bitwise_not(img_thresh_dilated)
+            
+            num_labels, labels = cv2.connectedComponents(img_thresh_for_regions)
+            
+            region_info = []
+            for label_id in range(1, num_labels):
+                region_mask = (labels == label_id)
+                region_size = np.sum(region_mask)
+                
+                if region_size < 50:
+                    continue
+                
+                ys, xs = np.where(region_mask)
+                if len(ys) == 0:
+                    continue
+                
+                mean_color = np.mean(img[ys, xs], axis=0)
+                if np.all(mean_color > 245):
+                    continue
+                
+                region_info.append({
+                    'label_id': label_id,
+                    'size': region_size,
+                    'ys': ys,
+                    'xs': xs
+                })
+            
+            region_info.sort(key=lambda r: r['size'])
+            
+            color_skip = max(1, skip_rate // 2)
+            block_counter = 0
+            
+            for region in region_info:
+                ys, xs = region['ys'], region['xs']
+                
+                # Agrupar pixels em blocos de grid usando NumPy (vetorizado)
+                grid_rows = ys // split_len
+                grid_cols = xs // split_len
+                grid_keys_arr = grid_rows * 10000 + grid_cols
+                unique_keys = np.unique(grid_keys_arr)
+                
+                blocks = []
+                for key in unique_keys:
+                    mask = grid_keys_arr == key
+                    blocks.append((ys[mask], xs[mask], int(key // 10000), int(key % 10000)))
+                
+                if len(blocks) == 0:
+                    continue
+                
+                # Ordenar blocos por linha e coluna (rápido e natural)
+                blocks.sort(key=lambda b: (b[2], b[3]))
+                
+                # Pintar bloco por bloco com animação
+                for block_ys, block_xs, gr_row, gr_col in blocks:
+                    drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
+                    
+                    block_counter += 1
+                    if block_counter % color_skip == 0:
+                        hx = min(gr_col * split_len + split_len // 2, target_wd - 1)
+                        hy = min(gr_row * split_len + split_len // 2, target_ht - 1)
+                        
+                        drawn_frame_with_hand = draw_hand_on_img(
+                            drawn_frame.copy(), hand.copy(), hx, hy,
+                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                        )
+                        video_object.write(drawn_frame_with_hand)
+        
+        # Adicionar imagem final
+        drawn_frame[:, :, :] = img
+        
+        for i in range(frame_rate * end_duration):
+            video_object.write(drawn_frame)
+        
         video_object.release()
-
+        
         # Tentar converter para H264
         try:
             import av
             h264_path = video_path.replace('.mp4', '_h264.mp4')
-
+            
             input_container = av.open(video_path, mode="r")
             output_container = av.open(h264_path, mode="w")
-
+            
             in_stream = input_container.streams.video[0]
             out_stream = output_container.add_stream("h264", rate=in_stream.average_rate)
             out_stream.width = in_stream.codec_context.width
             out_stream.height = in_stream.codec_context.height
             out_stream.pix_fmt = "yuv420p"
             out_stream.options = {"crf": "20"}
-
+            
             for frame in input_container.decode(video=0):
                 packet = out_stream.encode(frame)
                 if packet:
                     output_container.mux(packet)
-
+            
             packet = out_stream.encode(None)
             if packet:
                 output_container.mux(packet)
-
+            
             output_container.close()
             input_container.close()
-
+            
             os.remove(video_path)
             video_path = h264_path
         except Exception as e:
             print(f"Conversão H264 falhou (usando MP4 original): {e}")
-
+        
         return video_path, "Sucesso"
         
     except Exception as e:
