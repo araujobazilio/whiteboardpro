@@ -378,11 +378,11 @@ def generate_sketch_video(
     progress=gr.Progress()
 ):
     """
-    Gera vídeo de sketch animation
+    Gera vídeo de sketch animation (Contornos Vetoriais)
     
     Args:
         image_path: Caminho da imagem
-        split_len: Tamanho da divisão em grid
+        split_len: Tamanho da divisão (mantido por compatibilidade)
         frame_rate: FPS do vídeo
         skip_rate: Taxa de pulo (velocidade)
         end_duration: Duração da imagem final
@@ -390,6 +390,7 @@ def generate_sketch_video(
         progress: Objeto de progresso
     """
     try:
+        import av
         start_time = time.time()
         
         progress(0, desc="📸 Carregando imagem...")
@@ -404,47 +405,41 @@ def generate_sketch_video(
         # Ajustar resolução (limitar a 1920x1080 máximo para balancear qualidade e performance)
         aspect_ratio = img_wd / img_ht
         
-        # Limitar a 1080p para qualidade HD excelente
         MAX_HEIGHT = 1080
         MAX_WIDTH = 1920
         
         if img_ht > MAX_HEIGHT or img_wd > MAX_WIDTH:
-            # Calcular nova dimensão mantendo aspecto
             if img_wd / MAX_WIDTH > img_ht / MAX_HEIGHT:
-                # Largura é o fator limitante
                 target_wd = MAX_WIDTH
                 target_ht = int(target_wd / aspect_ratio)
             else:
-                # Altura é o fator limitante
                 target_ht = MAX_HEIGHT
                 target_wd = int(target_ht * aspect_ratio)
         else:
             target_ht = img_ht
             target_wd = img_wd
         
-        # GARANTIR que dimensões sejam divisíveis pelo split_len
-        # Isso evita o erro "array split does not result in an equal division"
-        target_wd = (target_wd // split_len) * split_len
-        target_ht = (target_ht // split_len) * split_len
-        
-        # Garantir dimensões mínimas (evitar 0 ou negativo)
-        min_dim = split_len * 2
-        target_wd = max(target_wd, min_dim)
-        target_ht = max(target_ht, min_dim)
-        
         # Ajustar para valores pares (necessário para codecs)
         target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
         target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
         
-        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht} (Full HD)...")
+        progress(0.05, desc=f"🔧 Redimensionando de {img_wd}x{img_ht} para {target_wd}x{target_ht}...")
         img = cv2.resize(img, (target_wd, target_ht))
         
-        # Processar imagem
-        progress(0.1, desc="🎨 Processando imagem...")
+        # 1. DETECÇÃO POR CONTORNOS (em vez de Grid)
+        progress(0.1, desc="🎨 Detectando contornos...")
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img_thresh = cv2.adaptiveThreshold(
-            img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
-        )
+        img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
+        img_edges = cv2.Canny(img_blur, 50, 150)
+        
+        # Encontrar contornos (linhas vetoriais)
+        contours, _ = cv2.findContours(img_edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        
+        # Ordenar contornos por tamanho (maiores primeiro)
+        contours = sorted(contours, key=lambda c: cv2.contourArea(c), reverse=True)
+        
+        total_contours = len(contours)
+        print(f"🎯 {total_contours} contornos detectados")
         
         # Carregar mão
         progress(0.15, desc="✋ Carregando imagem da mão...")
@@ -452,91 +447,75 @@ def generate_sketch_video(
             HAND_PATH, HAND_MASK_PATH
         )
         
-        # Criar nome do vídeo
+        # 2. OFFSET DA MÃO (ponta da caneta alinhada com o ponto do contorno)
+        OFFSET_X = 10
+        OFFSET_Y = 10
+        
+        # Canvas branco
+        drawn_frame = np.ones((target_ht, target_wd, 3), dtype=np.uint8) * 255
+        
+        # 3. VÍDEO DIRETO COM PyAV (libx264, leve e compatível com navegadores)
+        progress(0.2, desc="🎬 Criando vídeo otimizado...")
         now = datetime.now()
         video_name = f"sketch_{now.strftime('%Y%m%d_%H%M%S')}.mp4"
         video_path = os.path.join(SAVE_PATH, video_name)
         
-        # Criar objeto de vídeo
-        progress(0.2, desc="🎬 Criando vídeo...")
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (target_wd, target_ht))
+        container = av.open(video_path, mode='w')
+        stream = container.add_stream('libx264', rate=frame_rate)
+        stream.width = target_wd
+        stream.height = target_ht
+        stream.pix_fmt = 'yuv420p'
+        stream.options = {'crf': '28', 'preset': 'veryfast'}
         
-        # Canvas branco
-        drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
+        def write_av_frame(frame_bgr):
+            av_frame = av.VideoFrame.from_ndarray(frame_bgr, format='bgr24')
+            for packet in stream.encode(av_frame):
+                container.mux(packet)
         
-        # Dividir em grids
-        progress(0.25, desc="📐 Dividindo imagem em grids...")
-        n_cuts_vertical = int(math.ceil(target_ht / split_len))
-        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        # 4. DESENHAR CONTORNO POR CONTORNO (mão segue a linha)
+        progress(0.3, desc=f"✏️ Desenhando {total_contours} contornos...")
         
-        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
-        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
-        
-        # Encontrar grids com pixels pretos
-        cut_having_black = (grid_of_cuts < 10) * 1
-        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
-        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
-        
-        total_cuts = len(cut_black_indices)
-        selected_ind = 0
-        counter = 0
-        
-        progress(0.3, desc=f"✏️ Desenhando ({total_cuts} grids)...")
-        
-        # Desenhar
-        while len(cut_black_indices) > 1:
-            selected_ind_val = cut_black_indices[selected_ind].copy()
-            range_v_start = selected_ind_val[0] * split_len
-            range_v_end = range_v_start + split_len
-            range_h_start = selected_ind_val[1] * split_len
-            range_h_end = range_h_start + split_len
+        point_counter = 0
+        for i, cnt in enumerate(contours):
+            # Simplificar contorno com approxPolyDP (reduz pontos, acelera)
+            epsilon = 0.001 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
             
-            temp_drawing = np.zeros((split_len, split_len, 3))
-            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
+            # Desenhar o contorno completo no canvas
+            cv2.polylines(drawn_frame, [cnt], False, (0, 0, 0), 2)
             
-            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
+            # Animar a mão seguindo os pontos simplificados
+            for pt in approx:
+                x, y = pt[0]
+                
+                point_counter += 1
+                if point_counter % skip_rate == 0:
+                    frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(),
+                        max(0, x - OFFSET_X), max(0, y - OFFSET_Y),
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    write_av_frame(frame_with_hand)
             
-            hand_coord_x = range_h_start + int(split_len / 2)
-            hand_coord_y = range_v_start + int(split_len / 2)
-            
-            drawn_frame_with_hand = draw_hand_on_img(
-                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
-                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-            )
-            
-            cut_black_indices[selected_ind] = cut_black_indices[-1]
-            cut_black_indices = cut_black_indices[:-1]
-            
-            del selected_ind
-            
-            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
-            selected_ind = np.argmin(euc_arr)
-            
-            counter += 1
-            if counter % skip_rate == 0:
-                video_object.write(drawn_frame_with_hand)
-            
-            if counter % 100 == 0:
-                prog_percent = 0.3 + (0.6 * (1 - len(cut_black_indices) / total_cuts))
-                progress(prog_percent, desc=f"✏️ Desenhando... {100 * (1 - len(cut_black_indices) / total_cuts):.1f}%")
+            # Atualizar progresso
+            if i % max(1, total_contours // 20) == 0 and total_contours > 0:
+                prog_pct = 0.3 + (0.5 * (i + 1) / total_contours)
+                progress(prog_pct, desc=f"✏️ Desenhando contorno {i + 1}/{total_contours}...")
         
         # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
         if draw_mode == "Contornos + Colorização":
-            progress(0.7, desc="🎨 Detectando regiões para colorir...")
+            progress(0.8, desc="🎨 Colorindo regiões...")
             
-            # Inverter threshold para encontrar regiões fechadas
+            img_thresh = cv2.adaptiveThreshold(
+                img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
+            )
             img_thresh_inv = cv2.bitwise_not(img_thresh)
             kernel = np.ones((3, 3), np.uint8)
             img_thresh_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
             img_thresh_for_regions = cv2.bitwise_not(img_thresh_dilated)
             
-            # Encontrar regiões conectadas
             num_labels, labels = cv2.connectedComponents(img_thresh_for_regions)
             
-            # Calcular info de cada região
             region_info = []
             for label_id in range(1, num_labels):
                 region_mask = (labels == label_id)
@@ -548,117 +527,52 @@ def generate_sketch_video(
                 ys, xs = np.where(region_mask)
                 if len(ys) == 0:
                     continue
-                    
-                # Pular regiões brancas/quase brancas
+                
                 mean_color = np.mean(img[ys, xs], axis=0)
                 if np.all(mean_color > 245):
                     continue
                 
-                cy, cx = int(np.mean(ys)), int(np.mean(xs))
-                
                 region_info.append({
                     'label_id': label_id,
                     'size': region_size,
-                    'cx': cx,
-                    'cy': cy,
                     'ys': ys,
                     'xs': xs
                 })
             
-            # Ordenar por tamanho (menores primeiro)
             region_info.sort(key=lambda r: r['size'])
             
             total_regions = len(region_info)
             color_skip = max(1, skip_rate // 2)
             block_counter = 0
             
-            progress(0.72, desc=f"🎨 Colorindo {total_regions} regiões...")
-            
-            # Processar cada região por blocos de grid (meio termo: não pixel a pixel, nem tudo de uma vez)
             for reg_idx, region in enumerate(region_info):
                 ys, xs = region['ys'], region['xs']
+                drawn_frame[ys, xs] = img[ys, xs]
                 
-                # Agrupar pixels em blocos de grid usando NumPy (vetorizado, rápido)
-                grid_rows = ys // split_len
-                grid_cols = xs // split_len
-                grid_keys_arr = grid_rows * 10000 + grid_cols  # chave única por bloco
-                unique_keys = np.unique(grid_keys_arr)
+                block_counter += 1
+                if block_counter % color_skip == 0:
+                    cx = int(np.mean(xs))
+                    cy = int(np.mean(ys))
+                    frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(),
+                        max(0, cx - OFFSET_X), max(0, cy - OFFSET_Y),
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    write_av_frame(frame_with_hand)
                 
-                # Montar lista de blocos com seus pixels
-                blocks = []
-                for key in unique_keys:
-                    mask = grid_keys_arr == key
-                    blocks.append((ys[mask], xs[mask], int(key // 10000), int(key % 10000)))
-                
-                if len(blocks) == 0:
-                    continue
-                
-                # Ordenar blocos por linha e coluna (rápido e natural)
-                blocks.sort(key=lambda b: (b[2], b[3]))
-                
-                # Pintar bloco por bloco com animação
-                for block_ys, block_xs, gr_row, gr_col in blocks:
-                    # Aplicar cor do bloco inteiro de uma vez (vetorizado)
-                    drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
-                    
-                    block_counter += 1
-                    if block_counter % color_skip == 0:
-                        # Posicionar mão no centro do bloco
-                        hx = min(gr_col * split_len + split_len // 2, target_wd - 1)
-                        hy = min(gr_row * split_len + split_len // 2, target_ht - 1)
-                        
-                        drawn_frame_with_hand = draw_hand_on_img(
-                            drawn_frame.copy(), hand.copy(), hx, hy,
-                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-                        )
-                        video_object.write(drawn_frame_with_hand)
-                
-                # Atualizar progresso
                 if reg_idx % 10 == 0 and total_regions > 0:
-                    prog_pct = 0.72 + (0.18 * (reg_idx + 1) / total_regions)
+                    prog_pct = 0.8 + (0.1 * (reg_idx + 1) / total_regions)
                     progress(prog_pct, desc=f"🎨 Colorindo... {reg_idx + 1}/{total_regions}")
         
         # Adicionar imagem final
         progress(0.9, desc="🖼️ Adicionando imagem final...")
-        drawn_frame[:, :, :] = img
+        for _ in range(frame_rate * end_duration):
+            write_av_frame(img)
         
-        for i in range(frame_rate * end_duration):
-            video_object.write(drawn_frame)
-        
-        video_object.release()
-        
-        # Tentar converter para H264
-        progress(0.95, desc="🔄 Convertendo para H264...")
-        try:
-            import av
-            h264_path = video_path.replace('.mp4', '_h264.mp4')
-            
-            input_container = av.open(video_path, mode="r")
-            output_container = av.open(h264_path, mode="w")
-            
-            in_stream = input_container.streams.video[0]
-            out_stream = output_container.add_stream("h264", rate=in_stream.average_rate)
-            out_stream.width = in_stream.codec_context.width
-            out_stream.height = in_stream.codec_context.height
-            out_stream.pix_fmt = "yuv420p"
-            out_stream.options = {"crf": "20"}
-            
-            for frame in input_container.decode(video=0):
-                packet = out_stream.encode(frame)
-                if packet:
-                    output_container.mux(packet)
-            
-            packet = out_stream.encode(None)
-            if packet:
-                output_container.mux(packet)
-            
-            output_container.close()
-            input_container.close()
-            
-            os.remove(video_path)
-            video_path = h264_path
-        except Exception as e:
-            print(f"Conversão H264 falhou (usando MP4 original): {e}")
+        # Flush e fechar container
+        for packet in stream.encode(None):
+            container.mux(packet)
+        container.close()
         
         end_time = time.time()
         duration = end_time - start_time
@@ -800,9 +714,11 @@ def generate_sketch_video_single(
     draw_mode="Apenas Contornos"
 ):
     """
-    Versão simplificada da função original para uso em batch processing
+    Versão simplificada (Contornos Vetoriais) para uso em batch processing
     """
     try:
+        import av
+        
         # Carregar imagem
         img = cv2.imread(image_path)
         if img is None:
@@ -826,97 +742,74 @@ def generate_sketch_video_single(
             target_ht = img_ht
             target_wd = img_wd
         
-        # GARANTIR que dimensões sejam divisíveis pelo split_len
-        target_wd = (target_wd // split_len) * split_len
-        target_ht = (target_ht // split_len) * split_len
-        
-        # Garantir dimensões mínimas
-        min_dim = split_len * 2
-        target_wd = max(target_wd, min_dim)
-        target_ht = max(target_ht, min_dim)
-        
         # Ajustar para valores pares
         target_ht = target_ht if target_ht % 2 == 0 else target_ht - 1
         target_wd = target_wd if target_wd % 2 == 0 else target_wd - 1
         
         img = cv2.resize(img, (target_wd, target_ht))
         
-        # Processar imagem
+        # Detecção por contornos
         img_gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        img_thresh = cv2.adaptiveThreshold(
-            img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
-        )
+        img_blur = cv2.GaussianBlur(img_gray, (3, 3), 0)
+        img_edges = cv2.Canny(img_blur, 50, 150)
+        
+        contours, _ = cv2.findContours(img_edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)
+        contours = sorted(contours, key=lambda c: cv2.contourArea(c), reverse=True)
         
         # Carregar mão
         hand, hand_mask, hand_mask_inv, hand_ht, hand_wd = preprocess_hand_image(
             HAND_PATH, HAND_MASK_PATH
         )
         
-        # Criar nome do vídeo
+        # Offset da mão
+        OFFSET_X = 10
+        OFFSET_Y = 10
+        
+        # Canvas branco
+        drawn_frame = np.ones((target_ht, target_wd, 3), dtype=np.uint8) * 255
+        
+        # Vídeo direto com PyAV
         base_name = os.path.splitext(os.path.basename(image_path))[0]
         video_name = f"sketch_{base_name}_{int(time.time())}.mp4"
         video_path = os.path.join(tempfile.gettempdir(), video_name)
         
-        # Criar objeto de vídeo
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        video_object = cv2.VideoWriter(video_path, fourcc, frame_rate, (target_wd, target_ht))
+        container = av.open(video_path, mode='w')
+        stream = container.add_stream('libx264', rate=frame_rate)
+        stream.width = target_wd
+        stream.height = target_ht
+        stream.pix_fmt = 'yuv420p'
+        stream.options = {'crf': '28', 'preset': 'veryfast'}
         
-        # Canvas branco
-        drawn_frame = np.zeros(img.shape, np.uint8) + np.array([255, 255, 255], np.uint8)
+        def write_av_frame(frame_bgr):
+            av_frame = av.VideoFrame.from_ndarray(frame_bgr, format='bgr24')
+            for packet in stream.encode(av_frame):
+                container.mux(packet)
         
-        # Dividir em grids
-        n_cuts_vertical = int(math.ceil(target_ht / split_len))
-        n_cuts_horizontal = int(math.ceil(target_wd / split_len))
+        # Desenhar contorno por contorno
+        point_counter = 0
+        for cnt in contours:
+            epsilon = 0.001 * cv2.arcLength(cnt, True)
+            approx = cv2.approxPolyDP(cnt, epsilon, True)
+            
+            cv2.polylines(drawn_frame, [cnt], False, (0, 0, 0), 2)
+            
+            for pt in approx:
+                x, y = pt[0]
+                
+                point_counter += 1
+                if point_counter % skip_rate == 0:
+                    frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(),
+                        max(0, x - OFFSET_X), max(0, y - OFFSET_Y),
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    write_av_frame(frame_with_hand)
         
-        grid_of_cuts = np.array(np.split(img_thresh, n_cuts_horizontal, axis=-1))
-        grid_of_cuts = np.array(np.split(grid_of_cuts, n_cuts_vertical, axis=-2))
-        
-        # Encontrar grids com pixels pretos
-        cut_having_black = (grid_of_cuts < 10) * 1
-        cut_having_black = np.sum(np.sum(cut_having_black, axis=-1), axis=-1)
-        cut_black_indices = np.array(np.where(cut_having_black > 0)).T
-        
-        total_cuts = len(cut_black_indices)
-        selected_ind = 0
-        counter = 0
-        
-        # Desenhar
-        while len(cut_black_indices) > 1:
-            selected_ind_val = cut_black_indices[selected_ind].copy()
-            range_v_start = selected_ind_val[0] * split_len
-            range_v_end = range_v_start + split_len
-            range_h_start = selected_ind_val[1] * split_len
-            range_h_end = range_h_start + split_len
-            
-            temp_drawing = np.zeros((split_len, split_len, 3))
-            temp_drawing[:, :, 0] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 1] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            temp_drawing[:, :, 2] = grid_of_cuts[selected_ind_val[0]][selected_ind_val[1]]
-            
-            drawn_frame[range_v_start:range_v_end, range_h_start:range_h_end] = temp_drawing
-            
-            hand_coord_x = range_h_start + int(split_len / 2)
-            hand_coord_y = range_v_start + int(split_len / 2)
-            
-            drawn_frame_with_hand = draw_hand_on_img(
-                drawn_frame.copy(), hand.copy(), hand_coord_x, hand_coord_y,
-                hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-            )
-            
-            cut_black_indices[selected_ind] = cut_black_indices[-1]
-            cut_black_indices = cut_black_indices[:-1]
-            
-            del selected_ind
-            
-            euc_arr = euc_dist(cut_black_indices, selected_ind_val)
-            selected_ind = np.argmin(euc_arr)
-            
-            counter += 1
-            if counter % skip_rate == 0:
-                video_object.write(drawn_frame_with_hand)
-        
-        # === FASE 2: COLORIZAÇÃO POR REGIÕES (se modo selecionado) ===
+        # Colorização por regiões (se modo selecionado)
         if draw_mode == "Contornos + Colorização":
+            img_thresh = cv2.adaptiveThreshold(
+                img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
+            )
             img_thresh_inv = cv2.bitwise_not(img_thresh)
             kernel = np.ones((3, 3), np.uint8)
             img_thresh_dilated = cv2.dilate(img_thresh_inv, kernel, iterations=1)
@@ -954,78 +847,27 @@ def generate_sketch_video_single(
             
             for region in region_info:
                 ys, xs = region['ys'], region['xs']
+                drawn_frame[ys, xs] = img[ys, xs]
                 
-                # Agrupar pixels em blocos de grid usando NumPy (vetorizado)
-                grid_rows = ys // split_len
-                grid_cols = xs // split_len
-                grid_keys_arr = grid_rows * 10000 + grid_cols
-                unique_keys = np.unique(grid_keys_arr)
-                
-                blocks = []
-                for key in unique_keys:
-                    mask = grid_keys_arr == key
-                    blocks.append((ys[mask], xs[mask], int(key // 10000), int(key % 10000)))
-                
-                if len(blocks) == 0:
-                    continue
-                
-                # Ordenar blocos por linha e coluna (rápido e natural)
-                blocks.sort(key=lambda b: (b[2], b[3]))
-                
-                # Pintar bloco por bloco com animação
-                for block_ys, block_xs, gr_row, gr_col in blocks:
-                    drawn_frame[block_ys, block_xs] = img[block_ys, block_xs]
-                    
-                    block_counter += 1
-                    if block_counter % color_skip == 0:
-                        hx = min(gr_col * split_len + split_len // 2, target_wd - 1)
-                        hy = min(gr_row * split_len + split_len // 2, target_ht - 1)
-                        
-                        drawn_frame_with_hand = draw_hand_on_img(
-                            drawn_frame.copy(), hand.copy(), hx, hy,
-                            hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
-                        )
-                        video_object.write(drawn_frame_with_hand)
+                block_counter += 1
+                if block_counter % color_skip == 0:
+                    cx = int(np.mean(xs))
+                    cy = int(np.mean(ys))
+                    frame_with_hand = draw_hand_on_img(
+                        drawn_frame.copy(), hand.copy(),
+                        max(0, cx - OFFSET_X), max(0, cy - OFFSET_Y),
+                        hand_mask_inv.copy(), hand_ht, hand_wd, target_ht, target_wd
+                    )
+                    write_av_frame(frame_with_hand)
         
         # Adicionar imagem final
-        drawn_frame[:, :, :] = img
+        for _ in range(frame_rate * end_duration):
+            write_av_frame(img)
         
-        for i in range(frame_rate * end_duration):
-            video_object.write(drawn_frame)
-        
-        video_object.release()
-        
-        # Tentar converter para H264
-        try:
-            import av
-            h264_path = video_path.replace('.mp4', '_h264.mp4')
-            
-            input_container = av.open(video_path, mode="r")
-            output_container = av.open(h264_path, mode="w")
-            
-            in_stream = input_container.streams.video[0]
-            out_stream = output_container.add_stream("h264", rate=in_stream.average_rate)
-            out_stream.width = in_stream.codec_context.width
-            out_stream.height = in_stream.codec_context.height
-            out_stream.pix_fmt = "yuv420p"
-            out_stream.options = {"crf": "20"}
-            
-            for frame in input_container.decode(video=0):
-                packet = out_stream.encode(frame)
-                if packet:
-                    output_container.mux(packet)
-            
-            packet = out_stream.encode(None)
-            if packet:
-                output_container.mux(packet)
-            
-            output_container.close()
-            input_container.close()
-            
-            os.remove(video_path)
-            video_path = h264_path
-        except Exception as e:
-            print(f"Conversão H264 falhou (usando MP4 original): {e}")
+        # Flush e fechar container
+        for packet in stream.encode(None):
+            container.mux(packet)
+        container.close()
         
         return video_path, "Sucesso"
         
