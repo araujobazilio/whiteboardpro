@@ -318,9 +318,6 @@ def preprocess_hand_image(hand_path, hand_mask_path):
     hand_mask = hand_mask[top_left[1]:bottom_right[1], top_left[0]:bottom_right[0]]
     hand_mask_inv = 255 - hand_mask
     
-    hand_mask = hand_mask / 255
-    hand_mask_inv = hand_mask_inv / 255
-    
     hand_bg_ind = np.where(hand_mask == 0)
     hand[hand_bg_ind] = [0, 0, 0]
     
