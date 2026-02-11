@@ -14,6 +14,9 @@ Baseado em: https://github.com/daslearning-org/image-to-animation-offline
 - ✅ **🆕 Upload em massa de múltiplas imagens**
 - ✅ **🆕 Download automático em arquivo ZIP**
 - ✅ **🆕 Processamento paralelo (até 4 imagens simultâneas)**
+- ✅ **🆕 Lógica de Desenho Inteligente (desenha objeto por objeto)**
+- ✅ **🆕 Movimento Fluido da Mão (sem "pulos" bruscos)**
+- ✅ **🆕 Compressão de Vídeo Otimizada (arquivos leves)**
 - ✅ Conversão automática para H264
 - ✅ Funciona 100% offline (sem internet necessária)
 - ✅ Perfeito para criar vídeos educacionais e apresentações
