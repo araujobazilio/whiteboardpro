@@ -1,0 +1,52 @@
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# Git
+.git/
+.gitignore
+
+# Cache Python
+__pycache__/
+*.py[codz]
+*.egg-info/
+
+# Dados locais (serão montados como volume)
+data/
+saved_videos/
+
+# Arquivos de teste
+test_*.py
+test_*.png
+test_*.mp4
+verify_*.py
+
+# Backups e docs
+backup*.md
+instrucoes*.md
+README*.md
+LICENSE
+
+# Configs de outros deploys
+railway.toml
+render.yaml
+
+# Kivy app (não necessário para web)
+kivy/main.py
+kivy/main_layout.kv
+kivy/buildozer.spec
+kivy/dlDesktop.spec
+kivy/screens/
+kivy/p4a_local_recipes/
+kivy/sketchApi.py
+kivy/req_*.txt
+kivy/requirements.txt
+kivy/README.md
+
+# Backup do app
+app_licensed_backup.py
+
+# IDE
+.vscode/
+.idea/

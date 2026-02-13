@@ -1,4 +1,4 @@
-"""
+ """
 Image to Sketch Animation - Versão COMERCIAL
 Sistema completo com licenciamento integrado via Stripe
 """

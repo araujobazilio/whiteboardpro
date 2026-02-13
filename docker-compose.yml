@@ -1,0 +1,53 @@
+version: '3.8'
+
+# ============================================================
+# WhiteboardMaker - Docker Compose para Painel Hostinger
+# ============================================================
+# ANTES de implantar, buildar a imagem via SSH:
+#   cd /opt/whiteboardmaker
+#   git clone https://github.com/araujobazilio/whiteboardpro.git .
+#   docker build -t whiteboardmaker:latest .
+# ============================================================
+
+services:
+  # ========== WHITEBOARDMAKER (Gradio + SQLite) ==========
+  whiteboardmaker:
+    image: whiteboardmaker:latest
+    container_name: whiteboardmaker
+    ports:
+      - "7860:7860"
+    environment:
+      - PORT=7860
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY}
+      - STRIPE_PRICE_ID=${STRIPE_PRICE_ID}
+      - STRIPE_PAYMENT_LINK=${STRIPE_PAYMENT_LINK}
+    volumes:
+      - whiteboardmaker_data:/app/data
+      - whiteboardmaker_videos:/app/saved_videos
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7860/"]
+      interval: 30s
+      timeout: 10s
+      start_period: 60s
+      retries: 3
+
+  # ========== OPENCLAW #2 (Monitoramento do WhiteboardMaker) ==========
+  openclaw:
+    image: ghcr.io/hostinger/hvps-openclaw:latest
+    container_name: whiteboardmaker-openclaw
+    ports:
+      - "50146:50145"
+    environment:
+      - TELEGRAM_BOT_TOKEN=${OPENCLAW_TELEGRAM_BOT_TOKEN}
+      - TELEGRAM_CHAT_ID=${OPENCLAW_TELEGRAM_CHAT_ID}
+    depends_on:
+      whiteboardmaker:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  whiteboardmaker_data:
+    driver: local
+  whiteboardmaker_videos:
+    driver: local

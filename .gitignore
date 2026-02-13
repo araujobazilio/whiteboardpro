@@ -221,4 +221,9 @@ marimo/_lsp/
 __marimo__/
 backup.md
 
+# SQLite database (dados sensíveis)
+data/*.db
+data/*.db-wal
+data/*.db-shm
+
 
