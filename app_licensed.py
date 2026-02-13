@@ -438,8 +438,7 @@ def generate_sketch_video(
     progress=gr.Progress(),
     # Novos parâmetros opcionais para paridade
     sketch_duration_sec=None,
-    fill_duration_sec=None,
-    hand_style="default"
+    fill_duration_sec=None
 ):
     """
     Gera o vídeo de animação whiteboard a partir da imagem.
@@ -510,23 +509,10 @@ def generate_sketch_video(
             img_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 10
         )
         
-        # Carregar mão (Selecionar imagem com base no estilo)
-        progress(0.15, desc=f"✋ Carregando mão ({hand_style})...")
-        
-        current_hand_path = HAND_PATH
-        current_mask_path = HAND_MASK_PATH
-        
-        if hand_style != "default":
-            # Tentar encontrar arquivos específicos: drawing-hand-{style}.png
-            style_hand_path = os.path.join(BASE_PATH, 'kivy', 'data', 'images', f'drawing-hand-{hand_style}.png')
-            style_mask_path = os.path.join(BASE_PATH, 'kivy', 'data', 'images', f'hand-mask-{hand_style}.png')
-            
-            if os.path.exists(style_hand_path) and os.path.exists(style_mask_path):
-                current_hand_path = style_hand_path
-                current_mask_path = style_mask_path
-
+        # Carregar mão
+        progress(0.15, desc="✋ Carregando imagem da mão...")
         hand, hand_mask, hand_mask_inv, hand_ht, hand_wd = preprocess_hand_image(
-            current_hand_path, current_mask_path
+            HAND_PATH, HAND_MASK_PATH
         )
         
         # Criar nome do vídeo
@@ -785,7 +771,6 @@ def generate_sketch_video_batch(
     progress=gr.Progress(),
     sketch_duration_sec=None,
     fill_duration_sec=None,
-    hand_style="default"
 ):
     """
     Gera vídeos de sketch animation em lote
@@ -811,7 +796,7 @@ def generate_sketch_video_batch(
                 # Usar a função original sem progresso para evitar conflitos
                 video_path, message = generate_sketch_video_single(
                     image_path, split_len, frame_rate, skip_rate, end_duration, draw_mode,
-                    sketch_duration_sec, fill_duration_sec, hand_style
+                    sketch_duration_sec, fill_duration_sec
                 )
                 if video_path:
                     return idx, video_path, None
@@ -958,19 +943,8 @@ def generate_sketch_video_single(
         )
         
         # Carregar mão
-        current_hand_path = HAND_PATH
-        current_mask_path = HAND_MASK_PATH
-        
-        if hand_style != "default":
-            style_hand_path = os.path.join(BASE_PATH, 'kivy', 'data', 'images', f'drawing-hand-{hand_style}.png')
-            style_mask_path = os.path.join(BASE_PATH, 'kivy', 'data', 'images', f'hand-mask-{hand_style}.png')
-            
-            if os.path.exists(style_hand_path) and os.path.exists(style_mask_path):
-                current_hand_path = style_hand_path
-                current_mask_path = style_mask_path
-
         hand, hand_mask, hand_mask_inv, hand_ht, hand_wd = preprocess_hand_image(
-            current_hand_path, current_mask_path
+            HAND_PATH, HAND_MASK_PATH
         )
         
         # Criar nome do vídeo
@@ -1703,12 +1677,6 @@ def create_commercial_interface():
                                     info="'Apenas Contornos' = whiteboard clássico. 'Colorização' = preenche com cores."
                                 )
                                 
-                                batch_ui_hand_style = gr.Dropdown(
-                                    choices=[h.value for h in HandStyle],
-                                    value="default",
-                                    label="Estilo da Mão"
-                                )
-                                
                                 # Inputs ocultos batch
                                 batch_hidden_split_len = gr.Number(value=10, visible=False)
                                 batch_hidden_skip_rate = gr.Number(value=5, visible=False)
@@ -1813,7 +1781,7 @@ def create_commercial_interface():
             
             return info
         
-        def process_batch_images(files, split_len, frame_rate, skip_rate, end_duration, draw_mode, sketch_duration, fill_duration, hand_style, progress=gr.Progress()):
+        def process_batch_images(files, split_len, frame_rate, skip_rate, end_duration, draw_mode, sketch_duration, fill_duration, progress=gr.Progress()):
             if files is None or len(files) == 0:
                 return None, "❌ Nenhuma imagem selecionada", "Nenhuma imagem para processar"
             
@@ -1823,7 +1791,7 @@ def create_commercial_interface():
             # Processar em lote
             zip_path, message = generate_sketch_video_batch(
                 image_paths, split_len, frame_rate, skip_rate, end_duration, draw_mode, progress,
-                sketch_duration, fill_duration, hand_style
+                sketch_duration, fill_duration
             )
             
             # Gerar estatísticas
@@ -1857,8 +1825,7 @@ def create_commercial_interface():
                 draw_mode,
                 # Novos argumentos
                 ui_sketch_duration,
-                ui_fill_duration,
-                ui_hand_style
+                ui_fill_duration
             ],
             outputs=[video_output, status_output]
         )
@@ -1881,8 +1848,7 @@ def create_commercial_interface():
                 batch_draw_mode,
                 # Novos
                 batch_ui_sketch_duration,
-                batch_ui_fill_duration,
-                batch_ui_hand_style
+                batch_ui_fill_duration
             ],
             outputs=[batch_zip_output, batch_status_output, batch_stats],
             show_progress=True

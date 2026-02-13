@@ -12,10 +12,7 @@ class HandStyle(Enum):
     MALE = "male"
     FEMALE = "female"
     ROBOT = "robot"
-    # New styles requested by user
-    CANETA = "caneta"
-    PENA = "pena"
-    LAPIS = "lapis"
+    # Add more as needed
 
 class SketchColorMode(Enum):
     BW = "bw"
