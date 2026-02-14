@@ -1,0 +1,90 @@
+# Progresso de Desenvolvimento
+
+## 2026-02-14
+
+### Etapa concluída: Backend de recuperação de senha (SMTP + token)
+
+Arquivo alterado:
+- `app_licensed.py`
+
+Mudanças realizadas:
+1. Imports adicionados para SMTP e token seguro:
+   - `smtplib`
+   - `secrets`
+   - `MIMEText`
+2. Nova tabela SQLite criada em `init_db()`:
+   - `password_reset_tokens`
+3. Novos métodos adicionados em `LicenseManager`:
+   - `_send_email_smtp(recipient_email, subject, body_text)`
+   - `request_password_reset(email, reset_base_url)`
+   - `verify_password_reset_token(token)`
+   - `reset_password_with_token(token, new_password)`
+
+Regras de segurança aplicadas:
+- Não vaza se o email existe no sistema (mensagem neutra).
+- Token único com expiração de 1 hora.
+- Tokens antigos do mesmo email são invalidados.
+- Token é marcado como usado após reset de senha.
+- Credenciais SMTP via variáveis de ambiente (sem hardcode no código).
+
+Pendências da próxima etapa:
+- Adicionar UI no Gradio para "Esqueci minha senha".
+- Conectar botões/eventos ao backend de reset.
+- Validar fluxo ponta a ponta.
+
+### Etapa concluída: UI de recuperação de senha integrada no Gradio
+
+Arquivo alterado:
+- `app_licensed.py`
+
+Mudanças realizadas:
+1. Novas actions para recuperação de senha:
+   - `request_password_reset_action(email)`
+   - `reset_password_with_token_action(token, new_password, confirm_password)`
+2. Nova sub-aba de autenticação:
+   - `🔁 Recuperar Senha`
+3. Novos componentes de interface:
+   - email para solicitar link
+   - token de recuperação
+   - nova senha + confirmação
+   - botões de enviar link e redefinir senha
+4. Eventos conectados no fluxo Gradio:
+   - `request_reset_btn.click(...)`
+   - `confirm_reset_btn.click(...)`
+
+Pendências da próxima etapa:
+- Adicionar rate limiting no login/recuperação.
+- Validar fluxo ponta a ponta com SMTP real no ambiente.
+
+### Etapa concluída: Rate limiting básico no backend
+
+Arquivo alterado:
+- `app_licensed.py`
+
+Mudanças realizadas:
+1. Nova tabela SQLite para controle de tentativas:
+   - `rate_limit`
+2. Novos métodos internos no `LicenseManager`:
+   - `_check_rate_limit(identifier, action, max_attempts, window_minutes)`
+   - `_clear_rate_limit(identifier, action)`
+3. Proteção aplicada no login:
+   - bloqueia após 5 tentativas em 15 minutos
+   - limpa contador após login bem-sucedido
+4. Proteção aplicada na recuperação de senha:
+   - bloqueia após 3 solicitações em 15 minutos
+   - limpa contador quando o email de recuperação é enviado com sucesso
+
+Pendência atual:
+- Validar fluxo ponta a ponta com SMTP real no ambiente.
+
+### Etapa concluída: Validação SMTP real (envio de email)
+
+Validação executada em ambiente local com `venv` ativo.
+
+Resultado:
+- `SMTP_OK=True`
+- Mensagem: `✅ Email enviado.`
+
+Observação:
+- O envio SMTP está funcional com Gmail (`smtp.gmail.com:587`, STARTTLS).
+- Ainda falta validar o fluxo completo com token (solicitar reset + redefinir senha via UI) com um usuário real cadastrado.

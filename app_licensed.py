@@ -23,6 +23,9 @@ from datetime import datetime, timedelta
 import json
 import sqlite3
 import hashlib
+import smtplib
+import secrets
+from email.mime.text import MIMEText
 from werkzeug.security import generate_password_hash, check_password_hash
 from engine.settings import ProjectSettings, Quality, HandStyle, SketchColorMode, SequenceMode
 
@@ -57,6 +60,24 @@ def init_db():
             email TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY (email) REFERENCES users(email)
+        );
+        CREATE TABLE IF NOT EXISTS password_reset_tokens (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            email TEXT NOT NULL,
+            token TEXT UNIQUE NOT NULL,
+            expires_at TEXT NOT NULL,
+            used INTEGER DEFAULT 0,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY (email) REFERENCES users(email)
+        );
+        CREATE TABLE IF NOT EXISTS rate_limit (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            identifier TEXT NOT NULL,
+            action TEXT NOT NULL,
+            attempt_count INTEGER DEFAULT 1,
+            first_attempt TEXT NOT NULL,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(identifier, action)
         );
     """)
     conn.commit()
@@ -120,6 +141,210 @@ class LicenseManager:
             return False, f"❌ Erro ao cadastrar: {str(e)}"
         finally:
             conn.close()
+
+    def _send_email_smtp(self, recipient_email, subject, body_text):
+        """Envia email usando SMTP nativo do Python."""
+        smtp_host = os.environ.get("SMTP_HOST", "smtp.gmail.com").strip()
+        smtp_port_raw = os.environ.get("SMTP_PORT", "587").strip()
+        smtp_user = os.environ.get("SMTP_USER", "").strip()
+        smtp_pass = os.environ.get("SMTP_PASS", "").strip()
+        smtp_from = os.environ.get("SMTP_FROM", smtp_user).strip()
+
+        if not smtp_host or not smtp_user or not smtp_pass or not smtp_from:
+            return False, "❌ SMTP não configurado. Defina SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASS e SMTP_FROM."
+
+        try:
+            smtp_port = int(smtp_port_raw)
+        except ValueError:
+            return False, "❌ SMTP_PORT inválida."
+
+        msg = MIMEText(body_text, "plain", "utf-8")
+        msg["Subject"] = subject
+        msg["From"] = smtp_from
+        msg["To"] = recipient_email
+
+        try:
+            # Gmail recomendado: 587 + STARTTLS
+            with smtplib.SMTP(smtp_host, smtp_port, timeout=20) as server:
+                server.ehlo()
+                server.starttls()
+                server.ehlo()
+                server.login(smtp_user, smtp_pass)
+                server.sendmail(smtp_from, [recipient_email], msg.as_string())
+            return True, "✅ Email enviado."
+        except Exception as e:
+            return False, f"❌ Falha ao enviar email: {str(e)}"
+
+    def _check_rate_limit(self, identifier, action, max_attempts=5, window_minutes=15):
+        """Verifica e atualiza contador de rate limit. Retorna (permitido, minutos_restantes)."""
+        identifier = (identifier or "").strip().lower()
+        if not identifier:
+            identifier = "unknown"
+
+        now = datetime.now()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+
+        conn = get_db()
+        try:
+            row = conn.execute(
+                "SELECT attempt_count, first_attempt FROM rate_limit WHERE identifier = ? AND action = ?",
+                (identifier, action),
+            ).fetchone()
+
+            if not row:
+                conn.execute(
+                    "INSERT INTO rate_limit (identifier, action, attempt_count, first_attempt) VALUES (?, ?, 1, ?)",
+                    (identifier, action, now_str),
+                )
+                conn.commit()
+                return True, 0
+
+            attempt_count = int(row["attempt_count"])
+            first_attempt = datetime.strptime(row["first_attempt"], "%Y-%m-%d %H:%M:%S")
+            elapsed = (now - first_attempt).total_seconds() / 60
+
+            if elapsed > window_minutes:
+                conn.execute(
+                    "UPDATE rate_limit SET attempt_count = 1, first_attempt = ?, updated_at = CURRENT_TIMESTAMP WHERE identifier = ? AND action = ?",
+                    (now_str, identifier, action),
+                )
+                conn.commit()
+                return True, 0
+
+            if attempt_count >= max_attempts:
+                remaining = max(1, int(window_minutes - elapsed))
+                return False, remaining
+
+            conn.execute(
+                "UPDATE rate_limit SET attempt_count = attempt_count + 1, updated_at = CURRENT_TIMESTAMP WHERE identifier = ? AND action = ?",
+                (identifier, action),
+            )
+            conn.commit()
+            return True, 0
+        finally:
+            conn.close()
+
+    def _clear_rate_limit(self, identifier, action):
+        """Limpa contador após sucesso."""
+        identifier = (identifier or "").strip().lower()
+        if not identifier:
+            return
+
+        conn = get_db()
+        try:
+            conn.execute("DELETE FROM rate_limit WHERE identifier = ? AND action = ?", (identifier, action))
+            conn.commit()
+        finally:
+            conn.close()
+
+    def request_password_reset(self, email, reset_base_url):
+        """Solicita recuperação de senha e envia token por email."""
+        email = (email or "").strip().lower()
+
+        if not email or len(email) < 5 or "@" not in email:
+            return False, "❌ Informe um email válido."
+
+        if not reset_base_url:
+            return False, "❌ URL base de reset não configurada."
+
+        allowed, remaining = self._check_rate_limit(email, "password_reset", max_attempts=3, window_minutes=15)
+        if not allowed:
+            return False, f"❌ Muitas solicitações de recuperação. Tente novamente em {remaining} min."
+
+        conn = get_db()
+        try:
+            user = conn.execute("SELECT id FROM users WHERE email = ?", (email,)).fetchone()
+
+            # Resposta neutra para não vazar existência do email.
+            if not user:
+                return True, "✅ Se o email existir, enviaremos o link de recuperação."
+
+            token = secrets.token_urlsafe(32)
+            expires_at = (datetime.now() + timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+
+            conn.execute(
+                "UPDATE password_reset_tokens SET used = 1 WHERE email = ? AND used = 0",
+                (email,)
+            )
+            conn.execute(
+                "INSERT INTO password_reset_tokens (email, token, expires_at) VALUES (?, ?, ?)",
+                (email, token, expires_at)
+            )
+            conn.commit()
+
+            separator = "&" if "?" in reset_base_url else "?"
+            reset_link = f"{reset_base_url}{separator}token={token}"
+
+            body_text = (
+                "Você solicitou a redefinição da sua senha no WhiteboardPro.\n\n"
+                f"Link de recuperação (expira em 1 hora):\n{reset_link}\n\n"
+                "Se você não solicitou, ignore este email."
+            )
+            sent, send_msg = self._send_email_smtp(
+                recipient_email=email,
+                subject="Recuperação de senha - WhiteboardPro",
+                body_text=body_text,
+            )
+
+            if not sent:
+                conn.execute("DELETE FROM password_reset_tokens WHERE token = ?", (token,))
+                conn.commit()
+                return False, send_msg
+
+            self._clear_rate_limit(email, "password_reset")
+
+            return True, "✅ Se o email existir, enviaremos o link de recuperação."
+        except Exception as e:
+            return False, f"❌ Erro ao solicitar recuperação: {str(e)}"
+        finally:
+            conn.close()
+
+    def verify_password_reset_token(self, token):
+        """Retorna email se token for válido, senão None."""
+        token = (token or "").strip()
+        if not token:
+            return None
+
+        now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        conn = get_db()
+        try:
+            row = conn.execute(
+                """
+                SELECT email FROM password_reset_tokens
+                WHERE token = ? AND used = 0 AND expires_at > ?
+                """,
+                (token, now_str),
+            ).fetchone()
+            if not row:
+                return None
+            return row["email"]
+        finally:
+            conn.close()
+
+    def reset_password_with_token(self, token, new_password):
+        """Redefine a senha usando token válido."""
+        token = (token or "").strip()
+        if not token:
+            return False, "❌ Token inválido."
+
+        if not new_password or len(new_password) < 6:
+            return False, "❌ A nova senha deve ter no mínimo 6 caracteres."
+
+        email = self.verify_password_reset_token(token)
+        if not email:
+            return False, "❌ Token inválido ou expirado. Solicite novo link."
+
+        conn = get_db()
+        try:
+            new_hash = generate_password_hash(new_password)
+            conn.execute("UPDATE users SET password_hash = ? WHERE email = ?", (new_hash, email))
+            conn.execute("UPDATE password_reset_tokens SET used = 1 WHERE token = ?", (token,))
+            conn.commit()
+            return True, "✅ Senha redefinida com sucesso. Faça login com a nova senha."
+        except Exception as e:
+            return False, f"❌ Erro ao redefinir senha: {str(e)}"
+        finally:
+            conn.close()
     
     def login_with_password(self, email, password):
         """Faz login com email e senha, retorna (sucesso, mensagem, session_id)"""
@@ -130,6 +355,10 @@ class LicenseManager:
         
         if not password:
             return False, "❌ Por favor, insira sua senha.", None
+
+        allowed, remaining = self._check_rate_limit(email, "login", max_attempts=5, window_minutes=15)
+        if not allowed:
+            return False, f"❌ Muitas tentativas de login. Tente novamente em {remaining} min.", None
         
         conn = get_db()
         try:
@@ -156,6 +385,8 @@ class LicenseManager:
             
             self._current_license = result
             self._current_session_id = session_id
+
+            self._clear_rate_limit(email, "login")
             
             return True, "✅ Login realizado com sucesso!", session_id
         except Exception as e:
@@ -1252,6 +1483,25 @@ def login_action(email, password):
     else:
         return message, "", gr.update(visible=True), gr.update(visible=False)
 
+def request_password_reset_action(email):
+    """Solicita link de recuperação de senha por email."""
+    reset_base_url = os.environ.get("PASSWORD_RESET_BASE_URL", "").strip()
+    if not reset_base_url:
+        reset_base_url = os.environ.get("APP_BASE_URL", "").strip()
+    if not reset_base_url:
+        reset_base_url = "http://localhost:7860"
+
+    success, message = license_manager.request_password_reset(email, reset_base_url)
+    return message
+
+def reset_password_with_token_action(token, new_password, confirm_password):
+    """Redefine senha com token recebido por email."""
+    if new_password != confirm_password:
+        return "❌ As senhas não coincidem."
+
+    success, message = license_manager.reset_password_with_token(token, new_password)
+    return message
+
 def logout_action():
     """Faz logout do usuário"""
     license_manager.logout_user()
@@ -1581,6 +1831,46 @@ def create_commercial_interface():
                                         size="lg"
                                     )
                                     login_result = gr.Markdown(label="Resultado", visible=True)
+
+                                # Sub-tab RECUPERAR SENHA
+                                with gr.TabItem("🔁 Recuperar Senha"):
+                                    gr.HTML("""
+                                    <div style="background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 12px; margin-bottom: 15px;">
+                                        <p style="color: #8a6d3b; margin: 0; font-size: 0.9em;">
+                                            Informe seu email para receber o link de recuperação. Depois, cole o token recebido para redefinir sua senha.
+                                        </p>
+                                    </div>
+                                    """)
+
+                                    reset_email = gr.Textbox(
+                                        label="📧 Email da conta",
+                                        placeholder="seu@email.com"
+                                    )
+                                    request_reset_btn = gr.Button(
+                                        "📨 Enviar Link de Recuperação",
+                                        variant="secondary"
+                                    )
+                                    request_reset_result = gr.Markdown(label="Status do envio", visible=True)
+
+                                    reset_token = gr.Textbox(
+                                        label="🔑 Token de recuperação",
+                                        placeholder="Cole aqui o token recebido no link"
+                                    )
+                                    reset_new_password = gr.Textbox(
+                                        label="🔒 Nova senha",
+                                        placeholder="Mínimo 6 caracteres",
+                                        type="password"
+                                    )
+                                    reset_new_password_confirm = gr.Textbox(
+                                        label="🔒 Confirmar nova senha",
+                                        placeholder="Repita a nova senha",
+                                        type="password"
+                                    )
+                                    confirm_reset_btn = gr.Button(
+                                        "✅ Redefinir Senha",
+                                        variant="primary"
+                                    )
+                                    confirm_reset_result = gr.Markdown(label="Resultado", visible=True)
                                 
                                 # Sub-tab CADASTRO
                                 with gr.TabItem("📝 Primeiro Acesso"):
@@ -1830,6 +2120,20 @@ def create_commercial_interface():
             fn=login_and_save_session,
             inputs=[login_email, login_password],
             outputs=[login_result, session_id_hidden, landing_group, app_group, license_status_html]
+        )
+
+        # RECUPERAÇÃO DE SENHA - solicitar email
+        request_reset_btn.click(
+            fn=request_password_reset_action,
+            inputs=[reset_email],
+            outputs=[request_reset_result]
+        )
+
+        # RECUPERAÇÃO DE SENHA - confirmar nova senha
+        confirm_reset_btn.click(
+            fn=reset_password_with_token_action,
+            inputs=[reset_token, reset_new_password, reset_new_password_confirm],
+            outputs=[confirm_reset_result]
         )
         
         # Evento de logout (SEMPRE disponível, não depende de is_licensed no boot)
