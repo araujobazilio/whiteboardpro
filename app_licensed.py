@@ -2182,20 +2182,27 @@ def create_commercial_interface():
             license_bar_html = ""
             if session_id:
                 license_bar_html = _build_license_bar(license_manager)
-                save_script = f"""
-                <script>
-                saveSessionToStorage('{session_id}');
-                console.log('Session salva no localStorage');
-                </script>
-                """
-                result_msg = result_msg + "\n" + save_script
             
             return result_msg, session_id, landing_vis, app_vis, license_bar_html
-        
-        login_btn.click(
+
+        login_event = login_btn.click(
             fn=login_and_save_session,
             inputs=[login_email, login_password],
             outputs=[login_result, session_id_hidden, landing_group, app_group, license_status_html]
+        )
+
+        login_event.then(
+            fn=None,
+            inputs=[session_id_hidden],
+            outputs=[],
+            js="""
+            (sessionId) => {
+                if (sessionId) {
+                    saveSessionToStorage(sessionId);
+                }
+                return [];
+            }
+            """
         )
 
         # RECUPERAÇÃO DE SENHA - solicitar email
@@ -2216,19 +2223,43 @@ def create_commercial_interface():
         def logout_and_clear_storage():
             """Faz logout e limpa session_id do localStorage"""
             activation_vis, app_vis, _ = logout_action()
-            
-            clear_script = """
-            <script>
-            clearSessionFromStorage();
-            console.log('Session removida do localStorage');
-            </script>
-            """
-            
-            return activation_vis, app_vis, clear_script
-        
-        logout_btn.click(
+
+            return activation_vis, app_vis, ""
+
+        logout_event = logout_btn.click(
             fn=logout_and_clear_storage,
             outputs=[landing_group, app_group, session_id_hidden]
+        )
+
+        logout_event.then(
+            fn=None,
+            inputs=[],
+            outputs=[],
+            js="""
+            () => {
+                clearSessionFromStorage();
+                return [];
+            }
+            """
+        )
+
+        def restore_session_ui(session_id_stored):
+            """Restaura UI a partir de session_id salvo no localStorage."""
+            restored_session_id = restore_session_from_storage(session_id_stored)
+            if restored_session_id:
+                return restored_session_id, gr.update(visible=False), gr.update(visible=True), _build_license_bar(license_manager)
+
+            return "", gr.update(visible=True), gr.update(visible=False), ""
+
+        app.load(
+            fn=restore_session_ui,
+            inputs=[session_id_hidden],
+            outputs=[session_id_hidden, landing_group, app_group, license_status_html],
+            js="""
+            () => {
+                return [loadSessionFromStorage()];
+            }
+            """
         )
         
         # Funções auxiliares para interface

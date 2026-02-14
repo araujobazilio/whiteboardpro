@@ -141,3 +141,22 @@ Mudanças aplicadas:
 Resultado esperado:
 - Usuário não precisa copiar/colar token.
 - Fluxo de redefinição ocorre diretamente pelo link de recuperação.
+
+### Etapa concluída: Persistência de sessão após refresh + limpeza de script visível na UI
+
+Arquivos alterados:
+- `app_licensed.py`
+
+Problemas observados:
+1. Um bloco `<script>` aparecia como texto na interface após login.
+2. Ao atualizar a página, o usuário era deslogado e precisava autenticar novamente.
+
+Correções aplicadas:
+1. Removida concatenação de `<script>` no `login_result`.
+2. Persistência de `session_id` em `localStorage` movida para callback JS (`login_event.then`).
+3. Restauração automática de sessão no `app.load`, validando `session_id` no backend e ajustando visibilidade de `landing_group`/`app_group`.
+4. Limpeza de `localStorage` no logout via callback JS (`logout_event.then`).
+
+Resultado esperado:
+- Não exibe mais código JS na tela.
+- Sessão permanece ativa após atualizar a página, até o usuário clicar em `Sair`.
