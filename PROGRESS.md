@@ -178,3 +178,22 @@ Correções aplicadas:
 Resultado esperado:
 - Ao pressionar F5, sessão válida é restaurada automaticamente e o usuário continua no app.
 - Logout continua encerrando a sessão corretamente.
+
+### Etapa concluída: Detector automático de sessão via JavaScript puro
+
+Arquivos alterados:
+- `app_licensed.py`
+
+Problema anterior:
+- As abordagens anteriores usando `app.load` com JS não funcionaram de forma confiável no Gradio.
+
+Solução implementada:
+1. Criado campo invisível `auto_session_detector` que é preenchido automaticamente pelo JavaScript.
+2. Script JS executa imediatamente no carregamento da página, lê o `localStorage` e preenche o detector.
+3. Evento `.change` do detector aciona função Python `auto_restore_session` que valida e restaura a sessão.
+4. Interface sempre começa com landing visível, e só troca para app se sessão válida for detectada.
+
+Resultado esperado:
+- Sessão é restaurada automaticamente ao atualizar a página (F5).
+- Se não houver sessão no localStorage, permanece na landing page.
+- Logout funciona corretamente e limpa o localStorage.

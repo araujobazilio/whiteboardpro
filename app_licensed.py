@@ -1555,104 +1555,39 @@ def create_commercial_interface():
         # Estado para gerenciar sessão persistida
         session_state = gr.State(value=None)
         
-        # JavaScript para gerenciar localStorage
+        # Detector automático de sessão - campo invisível que é preenchido pelo JS
+        auto_session_detector = gr.Textbox(label="", visible=False, elem_id="auto_session_detector")
+        
+        # JavaScript para auto-detecção de sessão no localStorage
         gr.HTML("""
         <script>
-        function loadSessionFromStorage() {
-            const sessionId = localStorage.getItem('whiteboardpro_session_id');
-            return sessionId || '';
-        }
-        
-        function saveSessionToStorage(sessionId) {
-            if (sessionId) {
-                localStorage.setItem('whiteboardpro_session_id', sessionId);
-            }
-        }
-        
-        function clearSessionFromStorage() {
-            localStorage.removeItem('whiteboardpro_session_id');
-        }
-
-        const RESET_TOKEN_STORAGE_KEY = 'whiteboardpro_reset_token';
-
-        function getPasswordResetTokenFromUrl() {
-            try {
-                const params = new URLSearchParams(window.location.search);
-                return params.get('token') || '';
-            } catch (e) {
-                return '';
-            }
-        }
-
-        function cachePasswordResetToken() {
-            const urlToken = getPasswordResetTokenFromUrl();
-            if (urlToken) {
-                sessionStorage.setItem(RESET_TOKEN_STORAGE_KEY, urlToken);
-            }
-            return sessionStorage.getItem(RESET_TOKEN_STORAGE_KEY) || '';
-        }
-
-        function clearPasswordResetTokenFromUrl() {
-            try {
-                const cleanUrl = new URL(window.location.href);
-                cleanUrl.searchParams.delete('token');
-                window.history.replaceState({}, '', cleanUrl.toString());
-            } catch (e) {
-                // noop
-            }
-        }
-
-        function clickTabByText(fragment) {
-            const target = (fragment || '').toLowerCase();
-            if (!target) return false;
-
-            const tabs = Array.from(document.querySelectorAll('button,[role="tab"]'));
-            const found = tabs.find((el) => ((el.textContent || '').toLowerCase().includes(target)));
-            if (found) {
-                found.click();
-                return true;
-            }
-            return false;
-        }
-
-        function hydratePasswordResetFromLink() {
-            const token = cachePasswordResetToken();
-            if (!token) return;
-
-            const applyTokenToUi = () => {
-                // Garante navegação Início -> Entrar -> Recuperar Senha
-                clickTabByText('entrar');
-                clickTabByText('recuperar senha');
-
-                // Finaliza quando os campos de nova senha estiverem montados
-                const passwordInput = document.querySelector('input[placeholder="Mínimo 6 caracteres"]');
-                if (passwordInput) {
-                    passwordInput.focus();
-                    return true;
+        (function() {
+            // Verifica sessão imediatamente quando DOM estiver pronto
+            function checkAndRestoreSession() {
+                const sessionId = localStorage.getItem('whiteboardpro_session_id');
+                if (sessionId && sessionId.length > 0) {
+                    console.log('Sessão encontrada no localStorage:', sessionId);
+                    // Tenta preencher o campo detector para acionar restauração
+                    const detector = document.querySelector('input[placeholder*="auto_session_detector"], textarea[data-testid="auto_session_detector"]');
+                    if (detector) {
+                        detector.value = sessionId;
+                        detector.dispatchEvent(new Event('input', { bubbles: true }));
+                        detector.dispatchEvent(new Event('change', { bubbles: true }));
+                    }
                 }
-                return false;
-            };
-
-            let attempts = 0;
-            const maxAttempts = 25;
-            const intervalId = setInterval(() => {
-                attempts += 1;
-                const applied = applyTokenToUi();
-                if (applied || attempts >= maxAttempts) {
-                    clearInterval(intervalId);
-                }
-            }, 300);
-        }
-        
-        // Carregar sessão ao iniciar
-        window.addEventListener('load', function() {
-            const sessionId = loadSessionFromStorage();
-            if (sessionId) {
-                console.log('Sessão restaurada do localStorage');
             }
-
-            hydratePasswordResetFromLink();
-        });
+            
+            // Executa imediatamente
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', checkAndRestoreSession);
+            } else {
+                checkAndRestoreSession();
+            }
+            
+            // Também tenta após um delay para garantir que o Gradio montou
+            setTimeout(checkAndRestoreSession, 500);
+            setTimeout(checkAndRestoreSession, 1500);
+        })();
         </script>
         """)
         
@@ -1661,7 +1596,7 @@ def create_commercial_interface():
         # ============================================================
         # ÁREA PRÉ-LOGIN: Tabs Landing + Entrar (visível quando NÃO logado)
         # ============================================================
-        with gr.Group(visible=not is_licensed) as landing_group:
+        with gr.Group(visible=True) as landing_group:
             
             with gr.Tabs() as pre_login_tabs:
                 
@@ -2166,6 +2101,26 @@ def create_commercial_interface():
             </div>
             """)
         
+        # Evento de detector automático de sessão - restaura sessão se houver no localStorage via JS
+        def auto_restore_session(session_id_detected):
+            """Restaura sessão automaticamente se detectada no localStorage via JS"""
+            if not session_id_detected or len(session_id_detected) < 10:
+                return gr.update(), gr.update(), gr.update(), ""
+            
+            # Tenta restaurar a sessão
+            restored_session_id = restore_session_from_storage(session_id_detected)
+            if restored_session_id:
+                license_bar = _build_license_bar(license_manager)
+                return gr.update(visible=False), gr.update(visible=True), restored_session_id, license_bar
+            
+            return gr.update(), gr.update(), gr.update(), ""
+        
+        auto_session_detector.change(
+            fn=auto_restore_session,
+            inputs=[auto_session_detector],
+            outputs=[landing_group, app_group, session_id_hidden, license_status_html]
+        )
+        
         # Eventos de autenticação - Login com email + senha
         
         # CADASTRO
@@ -2231,25 +2186,6 @@ def create_commercial_interface():
         logout_event = logout_btn.click(
             fn=logout_and_clear_storage,
             outputs=[landing_group, app_group, session_id_hidden, session_storage_bridge]
-        )
-
-        def restore_session_ui(session_id_stored):
-            """Restaura UI a partir de session_id salvo no localStorage."""
-            restored_session_id = restore_session_from_storage(session_id_stored)
-            if restored_session_id:
-                return restored_session_id, gr.update(visible=False), gr.update(visible=True), _build_license_bar(license_manager)
-
-            return "", gr.update(visible=True), gr.update(visible=False), ""
-
-        app.load(
-            fn=restore_session_ui,
-            inputs=[session_id_hidden],
-            outputs=[session_id_hidden, landing_group, app_group, license_status_html],
-            js="""
-            () => {
-                return [localStorage.getItem('whiteboardpro_session_id') || ''];
-            }
-            """
         )
         
         # Funções auxiliares para interface
