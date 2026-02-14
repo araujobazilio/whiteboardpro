@@ -247,7 +247,7 @@ class LicenseManager:
         if not reset_base_url:
             return False, "❌ URL base de reset não configurada."
 
-        allowed, remaining = self._check_rate_limit(email, "password_reset", max_attempts=3, window_minutes=15)
+        allowed, remaining = self._check_rate_limit(email, "password_reset", max_attempts=5, window_minutes=15)
         if not allowed:
             return False, f"❌ Muitas solicitações de recuperação. Tente novamente em {remaining} min."
 
@@ -1565,6 +1565,51 @@ def create_commercial_interface():
         function clearSessionFromStorage() {
             localStorage.removeItem('whiteboardpro_session_id');
         }
+
+        function getPasswordResetTokenFromUrl() {
+            try {
+                const params = new URLSearchParams(window.location.search);
+                return params.get('token') || '';
+            } catch (e) {
+                return '';
+            }
+        }
+
+        function hydratePasswordResetFromLink() {
+            const token = getPasswordResetTokenFromUrl();
+            if (!token) return;
+
+            const applyTokenToUi = () => {
+                // Abre a aba de recuperação
+                const recoveryTabButton = Array.from(document.querySelectorAll('button')).find(
+                    (btn) => (btn.textContent || '').includes('Recuperar Senha')
+                );
+                if (recoveryTabButton) {
+                    recoveryTabButton.click();
+                }
+
+                // Preenche o token no input da interface
+                const tokenInput = document.querySelector('input[placeholder="Cole aqui o token recebido no link"]');
+                if (tokenInput) {
+                    tokenInput.value = token;
+                    tokenInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    tokenInput.focus();
+                }
+            };
+
+            // Tenta mais de uma vez porque os componentes Gradio podem montar após o load
+            setTimeout(applyTokenToUi, 200);
+            setTimeout(applyTokenToUi, 1000);
+
+            // Remove token da URL para não ficar exposto no histórico visual
+            try {
+                const cleanUrl = new URL(window.location.href);
+                cleanUrl.searchParams.delete('token');
+                window.history.replaceState({}, '', cleanUrl.toString());
+            } catch (e) {
+                // noop
+            }
+        }
         
         // Carregar sessão ao iniciar
         window.addEventListener('load', function() {
@@ -1572,6 +1617,8 @@ def create_commercial_interface():
             if (sessionId) {
                 console.log('Sessão restaurada do localStorage');
             }
+
+            hydratePasswordResetFromLink();
         });
         </script>
         """)
