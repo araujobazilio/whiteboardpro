@@ -88,3 +88,23 @@ Resultado:
 Observação:
 - O envio SMTP está funcional com Gmail (`smtp.gmail.com:587`, STARTTLS).
 - Ainda falta validar o fluxo completo com token (solicitar reset + redefinir senha via UI) com um usuário real cadastrado.
+
+### Etapa concluída: Validação E2E do fluxo de recuperação
+
+Validação executada com `venv` ativo e SMTP configurado por variáveis de ambiente.
+
+Fluxo testado:
+1. Usuário de teste preparado/atualizado no SQLite.
+2. Solicitação de recuperação por email (`request_password_reset`).
+3. Token gerado e recuperado do banco.
+4. Redefinição de senha com token (`reset_password_with_token`).
+5. Login com nova senha (`login_with_password`).
+
+Resultado:
+- `REQUEST_OK=True`
+- `TOKEN_OK=True`
+- `RESET_OK=True`
+- `LOGIN_OK=True`
+
+Status final:
+- Fluxo backend de recuperação de senha validado ponta a ponta com sucesso.
