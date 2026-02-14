@@ -125,3 +125,19 @@ Correção aplicada:
 
 Resultado esperado:
 - Clicar no link recebido por email abre o app e já prepara a interface para redefinição de senha, com token preenchido automaticamente.
+
+### Etapa concluída: Mudança de UX para reset por link direto (sem token manual)
+
+Arquivo alterado:
+- `app_licensed.py`
+
+Mudanças aplicadas:
+1. Removido campo manual de token da aba `Recuperar Senha`.
+2. `reset_password_with_token_action` agora lê o token diretamente da query string via `gr.Request`.
+3. Mensagem da interface ajustada para orientar abertura do link recebido por email.
+4. Botão `Redefinir Senha` passa apenas `nova senha` + `confirmar senha` para o backend.
+5. Script de hidratação mantém foco em abrir automaticamente `Entrar -> Recuperar Senha` quando há token na URL.
+
+Resultado esperado:
+- Usuário não precisa copiar/colar token.
+- Fluxo de redefinição ocorre diretamente pelo link de recuperação.

@@ -1494,10 +1494,17 @@ def request_password_reset_action(email):
     success, message = license_manager.request_password_reset(email, reset_base_url)
     return message
 
-def reset_password_with_token_action(token, new_password, confirm_password):
-    """Redefine senha com token recebido por email."""
+def reset_password_with_token_action(new_password, confirm_password, request: gr.Request):
+    """Redefine senha usando token do link de recuperação (query string)."""
+    token = ""
+    if request is not None:
+        token = (request.query_params.get("token", "") or "").strip()
+
     if new_password != confirm_password:
         return "❌ As senhas não coincidem."
+
+    if not token:
+        return "❌ Link de recuperação inválido. Solicite um novo email de recuperação."
 
     success, message = license_manager.reset_password_with_token(token, new_password)
     return message
@@ -1617,14 +1624,10 @@ def create_commercial_interface():
                 clickTabByText('entrar');
                 clickTabByText('recuperar senha');
 
-                // Preenche token quando input existir
-                const tokenInput = document.querySelector('input[placeholder="Cole aqui o token recebido no link"]');
-                if (tokenInput) {
-                    tokenInput.value = token;
-                    tokenInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    tokenInput.focus();
-                    sessionStorage.removeItem(RESET_TOKEN_STORAGE_KEY);
-                    clearPasswordResetTokenFromUrl();
+                // Finaliza quando os campos de nova senha estiverem montados
+                const passwordInput = document.querySelector('input[placeholder="Mínimo 6 caracteres"]');
+                if (passwordInput) {
+                    passwordInput.focus();
                     return true;
                 }
                 return false;
@@ -1914,7 +1917,7 @@ def create_commercial_interface():
                                     gr.HTML("""
                                     <div style="background: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 12px; margin-bottom: 15px;">
                                         <p style="color: #8a6d3b; margin: 0; font-size: 0.9em;">
-                                            Informe seu email para receber o link de recuperação. Depois, cole o token recebido para redefinir sua senha.
+                                            Informe seu email para receber o link de recuperação. Depois, abra o link recebido e defina sua nova senha.
                                         </p>
                                     </div>
                                     """)
@@ -1929,10 +1932,6 @@ def create_commercial_interface():
                                     )
                                     request_reset_result = gr.Markdown(label="Status do envio", visible=True)
 
-                                    reset_token = gr.Textbox(
-                                        label="🔑 Token de recuperação",
-                                        placeholder="Cole aqui o token recebido no link"
-                                    )
                                     reset_new_password = gr.Textbox(
                                         label="🔒 Nova senha",
                                         placeholder="Mínimo 6 caracteres",
@@ -2209,7 +2208,7 @@ def create_commercial_interface():
         # RECUPERAÇÃO DE SENHA - confirmar nova senha
         confirm_reset_btn.click(
             fn=reset_password_with_token_action,
-            inputs=[reset_token, reset_new_password, reset_new_password_confirm],
+            inputs=[reset_new_password, reset_new_password_confirm],
             outputs=[confirm_reset_result]
         )
         
