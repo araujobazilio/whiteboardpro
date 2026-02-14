@@ -1887,6 +1887,7 @@ def create_commercial_interface():
                     """)
                     
                     session_id_hidden = gr.Textbox(visible=False)
+                    session_storage_bridge = gr.HTML(value="", visible=False)
                     
                     with gr.Row():
                         with gr.Column(scale=1):
@@ -2180,29 +2181,23 @@ def create_commercial_interface():
             result_msg, session_id, landing_vis, app_vis = login_action(email, password)
             
             license_bar_html = ""
+            bridge_html = ""
             if session_id:
                 license_bar_html = _build_license_bar(license_manager)
+                bridge_html = f"""
+                <script>
+                (function() {{
+                    localStorage.setItem('whiteboardpro_session_id', '{session_id}');
+                }})();
+                </script>
+                """
             
-            return result_msg, session_id, landing_vis, app_vis, license_bar_html
+            return result_msg, session_id, landing_vis, app_vis, license_bar_html, bridge_html
 
         login_event = login_btn.click(
             fn=login_and_save_session,
             inputs=[login_email, login_password],
-            outputs=[login_result, session_id_hidden, landing_group, app_group, license_status_html]
-        )
-
-        login_event.then(
-            fn=None,
-            inputs=[session_id_hidden],
-            outputs=[],
-            js="""
-            (sessionId) => {
-                if (sessionId) {
-                    saveSessionToStorage(sessionId);
-                }
-                return [];
-            }
-            """
+            outputs=[login_result, session_id_hidden, landing_group, app_group, license_status_html, session_storage_bridge]
         )
 
         # RECUPERAÇÃO DE SENHA - solicitar email
@@ -2223,24 +2218,19 @@ def create_commercial_interface():
         def logout_and_clear_storage():
             """Faz logout e limpa session_id do localStorage"""
             activation_vis, app_vis, _ = logout_action()
+            bridge_html = """
+            <script>
+            (function() {
+                localStorage.removeItem('whiteboardpro_session_id');
+            })();
+            </script>
+            """
 
-            return activation_vis, app_vis, ""
+            return activation_vis, app_vis, "", bridge_html
 
         logout_event = logout_btn.click(
             fn=logout_and_clear_storage,
-            outputs=[landing_group, app_group, session_id_hidden]
-        )
-
-        logout_event.then(
-            fn=None,
-            inputs=[],
-            outputs=[],
-            js="""
-            () => {
-                clearSessionFromStorage();
-                return [];
-            }
-            """
+            outputs=[landing_group, app_group, session_id_hidden, session_storage_bridge]
         )
 
         def restore_session_ui(session_id_stored):
@@ -2257,7 +2247,7 @@ def create_commercial_interface():
             outputs=[session_id_hidden, landing_group, app_group, license_status_html],
             js="""
             () => {
-                return [loadSessionFromStorage()];
+                return [localStorage.getItem('whiteboardpro_session_id') || ''];
             }
             """
         )

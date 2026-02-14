@@ -160,3 +160,21 @@ Correções aplicadas:
 Resultado esperado:
 - Não exibe mais código JS na tela.
 - Sessão permanece ativa após atualizar a página, até o usuário clicar em `Sair`.
+
+### Etapa concluída: Ajuste robusto de persistência de sessão (refresh)
+
+Arquivos alterados:
+- `app_licensed.py`
+
+Problema observado:
+- Mesmo após ajustes anteriores, ao atualizar a página o usuário ainda era deslogado.
+
+Correções aplicadas:
+1. Adicionado `session_storage_bridge` (`gr.HTML` oculto) para executar scripts de persistência sem renderizar código na UI.
+2. No login, `session_id` é salvo no `localStorage` via bridge (`localStorage.setItem('whiteboardpro_session_id', session_id)`).
+3. No logout, sessão é removida do `localStorage` via bridge (`localStorage.removeItem('whiteboardpro_session_id')`).
+4. No `app.load`, leitura do `session_id` feita diretamente com `localStorage.getItem(...)` para restauração da sessão no backend.
+
+Resultado esperado:
+- Ao pressionar F5, sessão válida é restaurada automaticamente e o usuário continua no app.
+- Logout continua encerrando a sessão corretamente.
