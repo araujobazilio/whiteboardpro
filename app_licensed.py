@@ -1566,6 +1566,8 @@ def create_commercial_interface():
             localStorage.removeItem('whiteboardpro_session_id');
         }
 
+        const RESET_TOKEN_STORAGE_KEY = 'whiteboardpro_reset_token';
+
         function getPasswordResetTokenFromUrl() {
             try {
                 const params = new URLSearchParams(window.location.search);
@@ -1575,33 +1577,15 @@ def create_commercial_interface():
             }
         }
 
-        function hydratePasswordResetFromLink() {
-            const token = getPasswordResetTokenFromUrl();
-            if (!token) return;
+        function cachePasswordResetToken() {
+            const urlToken = getPasswordResetTokenFromUrl();
+            if (urlToken) {
+                sessionStorage.setItem(RESET_TOKEN_STORAGE_KEY, urlToken);
+            }
+            return sessionStorage.getItem(RESET_TOKEN_STORAGE_KEY) || '';
+        }
 
-            const applyTokenToUi = () => {
-                // Abre a aba de recuperação
-                const recoveryTabButton = Array.from(document.querySelectorAll('button')).find(
-                    (btn) => (btn.textContent || '').includes('Recuperar Senha')
-                );
-                if (recoveryTabButton) {
-                    recoveryTabButton.click();
-                }
-
-                // Preenche o token no input da interface
-                const tokenInput = document.querySelector('input[placeholder="Cole aqui o token recebido no link"]');
-                if (tokenInput) {
-                    tokenInput.value = token;
-                    tokenInput.dispatchEvent(new Event('input', { bubbles: true }));
-                    tokenInput.focus();
-                }
-            };
-
-            // Tenta mais de uma vez porque os componentes Gradio podem montar após o load
-            setTimeout(applyTokenToUi, 200);
-            setTimeout(applyTokenToUi, 1000);
-
-            // Remove token da URL para não ficar exposto no histórico visual
+        function clearPasswordResetTokenFromUrl() {
             try {
                 const cleanUrl = new URL(window.location.href);
                 cleanUrl.searchParams.delete('token');
@@ -1609,6 +1593,52 @@ def create_commercial_interface():
             } catch (e) {
                 // noop
             }
+        }
+
+        function clickTabByText(fragment) {
+            const target = (fragment || '').toLowerCase();
+            if (!target) return false;
+
+            const tabs = Array.from(document.querySelectorAll('button,[role="tab"]'));
+            const found = tabs.find((el) => ((el.textContent || '').toLowerCase().includes(target)));
+            if (found) {
+                found.click();
+                return true;
+            }
+            return false;
+        }
+
+        function hydratePasswordResetFromLink() {
+            const token = cachePasswordResetToken();
+            if (!token) return;
+
+            const applyTokenToUi = () => {
+                // Garante navegação Início -> Entrar -> Recuperar Senha
+                clickTabByText('entrar');
+                clickTabByText('recuperar senha');
+
+                // Preenche token quando input existir
+                const tokenInput = document.querySelector('input[placeholder="Cole aqui o token recebido no link"]');
+                if (tokenInput) {
+                    tokenInput.value = token;
+                    tokenInput.dispatchEvent(new Event('input', { bubbles: true }));
+                    tokenInput.focus();
+                    sessionStorage.removeItem(RESET_TOKEN_STORAGE_KEY);
+                    clearPasswordResetTokenFromUrl();
+                    return true;
+                }
+                return false;
+            };
+
+            let attempts = 0;
+            const maxAttempts = 25;
+            const intervalId = setInterval(() => {
+                attempts += 1;
+                const applied = applyTokenToUi();
+                if (applied || attempts >= maxAttempts) {
+                    clearInterval(intervalId);
+                }
+            }, 300);
         }
         
         // Carregar sessão ao iniciar

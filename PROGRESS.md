@@ -108,3 +108,20 @@ Resultado:
 
 Status final:
 - Fluxo backend de recuperação de senha validado ponta a ponta com sucesso.
+
+### Etapa concluída: Correção de hidratação do token no fluxo com landing
+
+Arquivo alterado:
+- `app_licensed.py`
+
+Problema observado:
+- Ao abrir o link de recuperação (`?token=...`), o app iniciava na landing (`Início`) e o token não era aplicado automaticamente.
+
+Correção aplicada:
+1. Persistência temporária do token em `sessionStorage`.
+2. Navegação automática para `Entrar` -> `Recuperar Senha`.
+3. Retry para preencher o token somente quando o input existir no DOM do Gradio.
+4. Limpeza do token da URL apenas após preenchimento bem-sucedido.
+
+Resultado esperado:
+- Clicar no link recebido por email abre o app e já prepara a interface para redefinição de senha, com token preenchido automaticamente.
