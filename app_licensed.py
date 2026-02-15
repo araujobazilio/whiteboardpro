@@ -447,6 +447,24 @@ class LicenseManager:
         finally:
             conn.close()
     
+    def restore_session_from_cookie(self, session_id):
+        """Restaura sessão a partir do session_id do cookie - usado em cada request"""
+        if not session_id:
+            return False
+        
+        email = self.verify_session(session_id)
+        if not email:
+            return False
+        
+        # Validar assinatura no Stripe
+        result = self.validate_by_email(email)
+        if result.get("valid"):
+            self._current_license = result
+            self._current_session_id = session_id
+            return True
+        
+        return False
+    
     # ==========================================
     # VALIDAÇÃO STRIPE (mantida intacta)
     # ==========================================
@@ -1552,44 +1570,8 @@ def create_commercial_interface():
     
     with gr.Blocks(title="Whiteboard Animation Pro - Commercial") as app:
         
-        # Estado para gerenciar sessão persistida
+        # Estado interno da sessão
         session_state = gr.State(value=None)
-        
-        # Detector automático de sessão - campo invisível que é preenchido pelo JS
-        auto_session_detector = gr.Textbox(label="", visible=False, elem_id="auto_session_detector")
-        
-        # JavaScript para auto-detecção de sessão no localStorage
-        gr.HTML("""
-        <script>
-        (function() {
-            // Verifica sessão imediatamente quando DOM estiver pronto
-            function checkAndRestoreSession() {
-                const sessionId = localStorage.getItem('whiteboardpro_session_id');
-                if (sessionId && sessionId.length > 0) {
-                    console.log('Sessão encontrada no localStorage:', sessionId);
-                    // Tenta preencher o campo detector para acionar restauração
-                    const detector = document.querySelector('input[placeholder*="auto_session_detector"], textarea[data-testid="auto_session_detector"]');
-                    if (detector) {
-                        detector.value = sessionId;
-                        detector.dispatchEvent(new Event('input', { bubbles: true }));
-                        detector.dispatchEvent(new Event('change', { bubbles: true }));
-                    }
-                }
-            }
-            
-            // Executa imediatamente
-            if (document.readyState === 'loading') {
-                document.addEventListener('DOMContentLoaded', checkAndRestoreSession);
-            } else {
-                checkAndRestoreSession();
-            }
-            
-            // Também tenta após um delay para garantir que o Gradio montou
-            setTimeout(checkAndRestoreSession, 500);
-            setTimeout(checkAndRestoreSession, 1500);
-        })();
-        </script>
-        """)
         
         payment_url = license_manager.payment_link or 'https://buy.stripe.com/test_5kQ28rfZdd2RablaVicQU02'
         
@@ -2130,27 +2112,42 @@ def create_commercial_interface():
             outputs=[reg_result]
         )
         
-        # LOGIN
-        def login_and_save_session(email, password):
-            """Faz login e salva session_id no localStorage"""
+        # HOOK DE COOKIE: Verifica sessão automaticamente em cada request
+        def check_cookie_on_load(request: gr.Request):
+            """Verifica cookie session_id ao carregar a página e restaura sessão se válido"""
+            session_id = request.cookies.get("session_id", "")
+            if session_id and license_manager.restore_session_from_cookie(session_id):
+                license_bar = _build_license_bar(license_manager)
+                return gr.update(visible=False), gr.update(visible=True), session_id, license_bar
+            return gr.update(visible=True), gr.update(visible=False), "", ""
+        
+        # Verificar cookie automaticamente ao carregar a página
+        app.load(
+            fn=check_cookie_on_load,
+            inputs=[],
+            outputs=[landing_group, app_group, session_id_hidden, license_status_html]
+        )
+        
+        # LOGIN - seta cookie via JavaScript bridge
+        def login_and_set_cookie(email, password):
+            """Faz login e seta cookie session_id via JS"""
             result_msg, session_id, landing_vis, app_vis = login_action(email, password)
             
             license_bar_html = ""
-            bridge_html = ""
+            cookie_script = ""
             if session_id:
                 license_bar_html = _build_license_bar(license_manager)
-                bridge_html = f"""
+                # Cookie via JavaScript (navegador cuida do resto)
+                cookie_script = f"""
                 <script>
-                (function() {{
-                    localStorage.setItem('whiteboardpro_session_id', '{session_id}');
-                }})();
+                document.cookie = "session_id={session_id}; path=/; max-age=2592000; SameSite=Strict";
                 </script>
                 """
             
-            return result_msg, session_id, landing_vis, app_vis, license_bar_html, bridge_html
+            return result_msg, session_id, landing_vis, app_vis, license_bar_html, cookie_script
 
         login_event = login_btn.click(
-            fn=login_and_save_session,
+            fn=login_and_set_cookie,
             inputs=[login_email, login_password],
             outputs=[login_result, session_id_hidden, landing_group, app_group, license_status_html, session_storage_bridge]
         )
@@ -2169,24 +2166,25 @@ def create_commercial_interface():
             outputs=[confirm_reset_result]
         )
         
-        # Evento de logout (SEMPRE disponível, não depende de is_licensed no boot)
-        def logout_and_clear_storage():
-            """Faz logout e limpa session_id do localStorage"""
+        # LOGOUT - limpa cookie
+        def logout_and_clear_cookie():
+            """Faz logout e limpa cookie session_id"""
             activation_vis, app_vis, _ = logout_action()
-            bridge_html = """
+            # Script para limpar cookie
+            clear_script = """
             <script>
-            (function() {
-                localStorage.removeItem('whiteboardpro_session_id');
-            })();
+            document.cookie = "session_id=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT; SameSite=Strict";
             </script>
             """
-
-            return activation_vis, app_vis, "", bridge_html
+            return activation_vis, app_vis, "", clear_script
 
         logout_event = logout_btn.click(
-            fn=logout_and_clear_storage,
+            fn=logout_and_clear_cookie,
             outputs=[landing_group, app_group, session_id_hidden, session_storage_bridge]
         )
+        
+        # REMOVIDO: Restauração via BrowserState (substituído por cookies HTTP)
+        # A restauração agora é feita via check_cookie_on_load no app.load
         
         # Funções auxiliares para interface
         def update_batch_info(files):
