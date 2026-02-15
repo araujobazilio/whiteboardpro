@@ -2083,26 +2083,6 @@ def create_commercial_interface():
             </div>
             """)
         
-        # Evento de detector automático de sessão - restaura sessão se houver no localStorage via JS
-        def auto_restore_session(session_id_detected):
-            """Restaura sessão automaticamente se detectada no localStorage via JS"""
-            if not session_id_detected or len(session_id_detected) < 10:
-                return gr.update(), gr.update(), gr.update(), ""
-            
-            # Tenta restaurar a sessão
-            restored_session_id = restore_session_from_storage(session_id_detected)
-            if restored_session_id:
-                license_bar = _build_license_bar(license_manager)
-                return gr.update(visible=False), gr.update(visible=True), restored_session_id, license_bar
-            
-            return gr.update(), gr.update(), gr.update(), ""
-        
-        auto_session_detector.change(
-            fn=auto_restore_session,
-            inputs=[auto_session_detector],
-            outputs=[landing_group, app_group, session_id_hidden, license_status_html]
-        )
-        
         # Eventos de autenticação - Login com email + senha
         
         # CADASTRO
